@@ -43,9 +43,9 @@ public class Test : MonoBehaviour {
     }
 
     private void FixedUpdate() {
-        float t = Time.fixedTime;
-        _client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
-        _client.Update();
+        //float t = Time.fixedTime;
+        //_client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
         _server.Update();
+        _client.Update();
     }
 }

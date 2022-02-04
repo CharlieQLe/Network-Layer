@@ -5,6 +5,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
+using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     public class UTPServerTransport : ServerTransport {
@@ -60,9 +61,8 @@ namespace NetworkLayer.Transports.UTP {
                     if (type == NetworkEvent.Type.Data) {
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
-                        ProcessedEvent processedEvent = new ProcessedEvent((ulong) connection.InternalId, type, index, reader.Length);
-                        index += processedEvent.Length;
-                        EventQueue.Enqueue(processedEvent);
+                        EventQueue.Enqueue(new ProcessedEvent((ulong) connection.InternalId, type, index, reader.Length));
+                        index += reader.Length;
                     } else {
                         EventQueue.Enqueue(new ProcessedEvent((ulong) connection.InternalId, type, 0, 0));
                     }
@@ -81,7 +81,7 @@ namespace NetworkLayer.Transports.UTP {
 
             public void Execute(int index) {
                 PendingSend pendingSend = PendingSends[index];
-                if (0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, pendingSend.Connection, out DataStreamWriter writer)) return;
+                if (!pendingSend.Connection.IsCreated || Driver.GetConnectionState(pendingSend.Connection) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, pendingSend.Connection, out DataStreamWriter writer)) return;
                 writer.WriteBytes(SendBuffer.GetSubArray(pendingSend.Index, pendingSend.Length));
                 Driver.EndSend(writer);
             }
@@ -161,7 +161,8 @@ namespace NetworkLayer.Transports.UTP {
         public override void Disconnect(ulong client) {
             if (!IsRunning) return;
             _mainThreadCallbacks.Enqueue(() => {
-                _driver.Disconnect(_connections[client]);
+                if (!_connections.TryGetValue(client, out NetworkConnection connection)) return;
+                _driver.Disconnect(connection);
                 _connections.Remove(client);
                 OnDisconnect(client);
             });
@@ -193,6 +194,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendBufferIndex = 0;
             _pendingSends.Clear();
             _sendBuffer.Clear();
+            _receiveBuffer.Clear();
             while (_mainThreadCallbacks.Count > 0) _mainThreadCallbacks.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
@@ -210,7 +212,9 @@ namespace NetworkLayer.Transports.UTP {
                 EventQueue = _eventQueue,
                 ReceiveBuffer = _receiveBuffer
             };
-            _job = processJob.Schedule(acceptConnectionsJob.Schedule(_driver.ScheduleUpdate(_pendingSends.Length > 0 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default)));
+            _job = _pendingSends.Length > 0 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default;
+            _job = acceptConnectionsJob.Schedule(_job);
+            _job = processJob.Schedule(_job);
         }
 
         public override void Dispose() {

@@ -4,6 +4,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
+using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     public class UTPClientTransport : ClientTransport {
@@ -45,9 +46,8 @@ namespace NetworkLayer.Transports.UTP {
                     if (type == NetworkEvent.Type.Data) {
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
-                        ProcessedEvent processedEvent = new ProcessedEvent(type, index, reader.Length);
-                        index += processedEvent.Length;
-                        EventQueue.Enqueue(processedEvent);
+                        EventQueue.Enqueue(new ProcessedEvent(type, index, reader.Length));
+                        index += reader.Length;
                     } else {
                         EventQueue.Enqueue(new ProcessedEvent(type, 0, 0));
                     }
@@ -67,7 +67,7 @@ namespace NetworkLayer.Transports.UTP {
 
             public void Execute(int index) {
                 PendingSend pendingSend = PendingSends[index];
-                if (0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, Connection, out DataStreamWriter writer)) return;
+                if (!Connection.IsCreated || Driver.GetConnectionState(Connection) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, Connection, out DataStreamWriter writer)) return;
                 writer.WriteBytes(SendBuffer.GetSubArray(pendingSend.Index, pendingSend.Length));
                 Driver.EndSend(writer);
             }
@@ -106,17 +106,22 @@ namespace NetworkLayer.Transports.UTP {
 
         public UTPClientTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
-        public override EClientState State => _state;
+        public override EClientState State => _connection.IsCreated ? _state : EClientState.Disconnected;
 
         public override void Connect(string address, ushort port) {
-            if (_state != EClientState.Disconnected || !NetworkEndPoint.TryParse(address, port, out NetworkEndPoint endpoint)) return;
+            if (State != EClientState.Disconnected) return;
+            NetworkEndPoint endpoint;
+            if (address == "localhost" || address == "127.0.0.1") {
+                endpoint = NetworkEndPoint.LoopbackIpv4;
+                endpoint.Port = port;
+            } else if (!NetworkEndPoint.TryParse(address, port, out endpoint)) return;
             _connection = _driver.Connect(endpoint);
             _state = EClientState.Connecting;
             OnAttemptConnection();
         }
 
         public override void Disconnect() {
-            if (_state == EClientState.Disconnected) return;
+            if (State == EClientState.Disconnected) return;
             _job.Complete();
             _driver.Disconnect(_connection);
             _driver.ScheduleFlushSend(default).Complete();
@@ -130,11 +135,15 @@ namespace NetworkLayer.Transports.UTP {
 
         public override void Update() {
             _job.Complete();
-            if (_state == EClientState.Disconnected) return;
+            if (State == EClientState.Disconnected) return;
+            _state = _driver.GetConnectionState(_connection) switch {
+                NetworkConnection.State.Connected => EClientState.Connected,
+                NetworkConnection.State.Connecting => EClientState.Connecting,
+                _ => EClientState.Disconnected
+            };
             while (_eventQueue.TryDequeue(out ProcessedEvent networkEvent)) {
                 switch (networkEvent.Type) {
                     case NetworkEvent.Type.Connect: {
-                        _state = EClientState.Connected;
                         OnConnect();
                         break;
                     }
@@ -156,6 +165,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendBufferIndex = 0;
             _pendingSends.Clear();
             _sendBuffer.Clear();
+            _receiveBuffer.Clear();
             while (_mainThreadCallbacks.Count > 0) _mainThreadCallbacks.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
@@ -171,7 +181,9 @@ namespace NetworkLayer.Transports.UTP {
                 EventQueue = _eventQueue,
                 ReceiveBuffer = _receiveBuffer
             };
-            _job = processJob.Schedule(_driver.ScheduleUpdate(_pendingSends.Length > 0 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default));
+            _job = _pendingSends.Length > 0 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default;
+            _job = _driver.ScheduleUpdate(_job);
+            _job = processJob.Schedule(_job);
         }
 
         public override void Dispose() {
@@ -186,8 +198,9 @@ namespace NetworkLayer.Transports.UTP {
         }
 
         public override void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (_state != EClientState.Connected) return;
+            if (State != EClientState.Connected) return;
             _mainThreadCallbacks.Enqueue(() => {
+                if (State != EClientState.Connected) return;
                 _writer.Reset();
                 _writer.PutUInt(messageId);
                 writeMessage(_writer);
