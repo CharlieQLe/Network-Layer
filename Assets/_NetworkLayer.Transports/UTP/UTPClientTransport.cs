@@ -1,11 +1,9 @@
-using System;
 using System.Collections.Generic;
 using NetworkLayer.Utils;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
-using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     public class UTPClientTransport : ClientTransport {
@@ -45,11 +43,9 @@ namespace NetworkLayer.Transports.UTP {
                 NetworkEvent.Type type;
                 while ((type = Driver.PopEventForConnection(Connection, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     if (type == NetworkEvent.Type.Data) {
-                        NativeArray<byte> stream = new NativeArray<byte>(reader.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-                        reader.ReadBytes(stream);
-                        ProcessedEvent processedEvent = new ProcessedEvent(type, index, stream.Length);
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
-                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer.AsArray(), processedEvent.Index, processedEvent.Length);
+                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
+                        ProcessedEvent processedEvent = new ProcessedEvent(type, index, reader.Length);
                         index += processedEvent.Length;
                         EventQueue.Enqueue(processedEvent);
                     } else {

@@ -58,11 +58,9 @@ namespace NetworkLayer.Transports.UTP {
                 NetworkEvent.Type type;
                 while ((type = Driver.PopEvent(out NetworkConnection connection, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     if (type == NetworkEvent.Type.Data) {
-                        NativeArray<byte> stream = new NativeArray<byte>(reader.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-                        reader.ReadBytes(stream);
-                        ProcessedEvent processedEvent = new ProcessedEvent((ulong) connection.InternalId, type, index, stream.Length);
-                        ReceiveBuffer.Resize(index + reader.Length, NativeArrayOptions.UninitializedMemory);
-                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer.AsArray(), processedEvent.Index, processedEvent.Length);
+                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
+                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
+                        ProcessedEvent processedEvent = new ProcessedEvent((ulong) connection.InternalId, type, index, reader.Length);
                         index += processedEvent.Length;
                         EventQueue.Enqueue(processedEvent);
                     } else {

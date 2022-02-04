@@ -28,7 +28,6 @@ namespace NetworkLayer {
                         if (attribute == null || attribute.MessageGroupId != messageGroupId) continue;
                         Delegate callback = Delegate.CreateDelegate(typeof(ReceiveMessageDelegate), methodInfo, false);
                         _receiveMessageCallbacks[attribute.MessageId] = (ReceiveMessageDelegate) callback ?? throw new Exception($"Method {methodInfo.Name} is not a server message receiver!");
-                        UnityEngine.Debug.Log($"Method {methodInfo.Name} registered as server callback!");
                     }
                 }
             }
