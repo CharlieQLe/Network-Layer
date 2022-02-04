@@ -69,7 +69,7 @@ namespace NetworkLayer.Transports.UTP {
                 }
             }
         }
-
+        
         [BurstCompile]
         private struct SendDataJob : IJobFor {
             public NetworkDriver.Concurrent Driver;
