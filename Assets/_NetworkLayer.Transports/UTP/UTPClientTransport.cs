@@ -48,8 +48,8 @@ namespace NetworkLayer.Transports.UTP {
                         NativeArray<byte> stream = new NativeArray<byte>(reader.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
                         reader.ReadBytes(stream);
                         ProcessedEvent processedEvent = new ProcessedEvent(type, index, stream.Length);
-                        if (ReceiveBuffer.Length < index + reader.Length) ReceiveBuffer.Resize(index + reader.Length, NativeArrayOptions.UninitializedMemory);
-                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer, processedEvent.Index, processedEvent.Length);
+                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
+                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer.AsArray(), processedEvent.Index, processedEvent.Length);
                         index += processedEvent.Length;
                         EventQueue.Enqueue(processedEvent);
                     } else {
@@ -91,6 +91,7 @@ namespace NetworkLayer.Transports.UTP {
 
         private int _sendBufferIndex;
         private EClientState _state;
+        private readonly MessageWriter _writer;
         private readonly MessageReader _reader;
         private readonly Queue<MainThreadDelegate> _mainThreadCallbacks;
 
@@ -102,6 +103,7 @@ namespace NetworkLayer.Transports.UTP {
             _receiveBuffer = new NativeList<byte>(1024, Allocator.Persistent);
             _pendingSends = new NativeList<PendingSend>(1, Allocator.Persistent);
             _eventQueue = new NativeQueue<ProcessedEvent>(Allocator.Persistent);
+            _writer = new MessageWriter();
             _reader = new MessageReader();
             _mainThreadCallbacks = new Queue<MainThreadDelegate>();
         }
@@ -155,8 +157,9 @@ namespace NetworkLayer.Transports.UTP {
                     }
                 }
             }
-            _job = default;
             _sendBufferIndex = 0;
+            _pendingSends.Clear();
+            _sendBuffer.Clear();
             while (_mainThreadCallbacks.Count > 0) _mainThreadCallbacks.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
@@ -164,7 +167,7 @@ namespace NetworkLayer.Transports.UTP {
                 UnreliablePipeline = _unreliablePipeline,
                 ReliablePipeline = _reliablePipeline,
                 PendingSends = _pendingSends,
-                SendBuffer = _sendBuffer.AsDeferredJobArray()
+                SendBuffer = _sendBuffer
             };
             ProcessJob processJob = new ProcessJob {
                 Driver = _driver,
@@ -179,21 +182,23 @@ namespace NetworkLayer.Transports.UTP {
             Disconnect();
             _driver.Dispose();
             _sendBuffer.Dispose();
+            _receiveBuffer.Dispose();
             _pendingSends.Dispose();
             _eventQueue.Dispose();
             _unreliablePipeline = default;
             _reliablePipeline = default;
         }
 
-        protected override void Send(byte[] data, int count, ESendMode sendMode) {
+        public override void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+            if (_state != EClientState.Connected) return;
             _mainThreadCallbacks.Enqueue(() => {
-                
-                // todo: fix send
-                
-                //if (_sendBuffer.Capacity < _sendBufferIndex + count) _sendBuffer.Resize(_sendBuffer.Capacity * 2, NativeArrayOptions.UninitializedMemory);
-                //NativeArray<byte>.Copy(data, 0, _sendBuffer, _sendBufferIndex, count);
-                //_pendingSends.Add(new PendingSend(_sendBufferIndex, count, sendMode));
-                //_sendBufferIndex += count;
+                _writer.Reset();
+                _writer.PutUInt(messageId);
+                writeMessage(_writer);
+                _sendBuffer.ResizeUninitialized(_sendBufferIndex + _writer.Length);
+                NativeArray<byte>.Copy(_writer.Data, 0, _sendBuffer.AsArray(), _sendBufferIndex, _writer.Length);
+                _pendingSends.Add(new PendingSend(_sendBufferIndex, _writer.Length, sendMode));
+                _sendBufferIndex = _sendBuffer.Length;
             });
         }
     }

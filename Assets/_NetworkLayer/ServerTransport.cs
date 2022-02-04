@@ -18,7 +18,6 @@ namespace NetworkLayer {
         public event DisconnectDelegate OnDisconnectEvent;
         
         private readonly Dictionary<uint, ReceiveMessageDelegate> _receiveMessageCallbacks;
-        private readonly MessageWriter _writer;
 
         protected ServerTransport(uint messageGroupId) {
             _receiveMessageCallbacks = new Dictionary<uint, ReceiveMessageDelegate>();
@@ -29,43 +28,19 @@ namespace NetworkLayer {
                         if (attribute == null || attribute.MessageGroupId != messageGroupId) continue;
                         Delegate callback = Delegate.CreateDelegate(typeof(ReceiveMessageDelegate), methodInfo, false);
                         _receiveMessageCallbacks[attribute.MessageId] = (ReceiveMessageDelegate) callback ?? throw new Exception($"Method {methodInfo.Name} is not a server message receiver!");
+                        UnityEngine.Debug.Log($"Method {methodInfo.Name} registered as server callback!");
                     }
                 }
             }
-            _writer = new MessageWriter();
         }
         
         protected ServerTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
-        private void WriteToMessage(uint messageId, WriteMessageDelegate writeMessage) {
-            _writer.Reset();
-            _writer.PutUInt(messageId);
-            writeMessage(_writer);
-        }
-        
         public void SendMessageToAll(string messageName, WriteMessageDelegate writeMessage, ESendMode sendMode) => SendMessageToAll(Hash32.Generate(messageName), writeMessage, sendMode);
         
         public void SendMessageToClients(IEnumerable<ulong> clients, string messageName, WriteMessageDelegate writeMessage, ESendMode sendMode) => SendMessageToClients(clients, Hash32.Generate(messageName), writeMessage, sendMode);
         
         public void SendMessageToClient(ulong client, string messageName, WriteMessageDelegate writeMessage, ESendMode sendMode) => SendMessageToClient(client, Hash32.Generate(messageName), writeMessage, sendMode);
-
-        public void SendMessageToAll(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) return;
-            WriteToMessage(messageId, writeMessage);
-            SendToAll(_writer.Data, _writer.Length, sendMode);
-        }
-
-        public void SendMessageToClients(IEnumerable<ulong> clients, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) return;
-            WriteToMessage(messageId, writeMessage);
-            SendToClients(clients, _writer.Data, _writer.Length, sendMode);
-        }
-
-        public void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) return;
-            WriteToMessage(messageId, writeMessage);
-            SendToClient(client, _writer.Data, _writer.Length, sendMode);
-        }
 
         protected void OnHost() => OnHostEvent?.Invoke();
 
@@ -93,11 +68,12 @@ namespace NetworkLayer {
 
         public abstract void Dispose();
         
-        protected abstract void SendToAll(byte[] data, int count, ESendMode sendMode);
+        public abstract void SendMessageToAll(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode);
 
-        protected abstract void SendToClients(IEnumerable<ulong> clients, byte[] data, int count, ESendMode sendMode);
-        
-        protected abstract void SendToClient(ulong client, byte[] data, int count, ESendMode sendMode);
+        public abstract void SendMessageToClients(IEnumerable<ulong> clients, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode);
+
+        public abstract void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode);
+
         
     }
 }

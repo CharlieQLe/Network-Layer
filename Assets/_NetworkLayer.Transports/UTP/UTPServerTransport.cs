@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using NetworkLayer.Utils;
 using Unity.Burst;
@@ -60,8 +61,8 @@ namespace NetworkLayer.Transports.UTP {
                         NativeArray<byte> stream = new NativeArray<byte>(reader.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
                         reader.ReadBytes(stream);
                         ProcessedEvent processedEvent = new ProcessedEvent((ulong) connection.InternalId, type, index, stream.Length);
-                        if (ReceiveBuffer.Length < index + reader.Length) ReceiveBuffer.Resize(index + reader.Length, NativeArrayOptions.UninitializedMemory);
-                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer, processedEvent.Index, processedEvent.Length);
+                        ReceiveBuffer.Resize(index + reader.Length, NativeArrayOptions.UninitializedMemory);
+                        NativeArray<byte>.Copy(stream, 0, ReceiveBuffer.AsArray(), processedEvent.Index, processedEvent.Length);
                         index += processedEvent.Length;
                         EventQueue.Enqueue(processedEvent);
                     } else {
@@ -101,6 +102,7 @@ namespace NetworkLayer.Transports.UTP {
         private JobHandle _job;
 
         private int _sendBufferIndex;
+        private readonly MessageWriter _writer;
         private readonly MessageReader _reader;
         private readonly Queue<MainThreadDelegate> _mainThreadCallbacks;
         private readonly Dictionary<ulong, NetworkConnection> _connections;
@@ -111,6 +113,7 @@ namespace NetworkLayer.Transports.UTP {
             _pendingSends = new NativeList<PendingSend>(1, Allocator.Persistent);
             _eventQueue = new NativeQueue<ProcessedEvent>(Allocator.Persistent);
             _acceptedConnections = new NativeQueue<NetworkConnection>(Allocator.Persistent);
+            _writer = new MessageWriter();
             _reader = new MessageReader();
             _mainThreadCallbacks = new Queue<MainThreadDelegate>();
             _connections = new Dictionary<ulong, NetworkConnection>();
@@ -120,9 +123,12 @@ namespace NetworkLayer.Transports.UTP {
 
         public override bool IsRunning => _driver.IsCreated;
 
-        private void WriteToSendBuffer(byte[] data, int count) {
-            if (_sendBuffer.Length < _sendBufferIndex + count) _sendBuffer.Resize(_sendBufferIndex + count, NativeArrayOptions.UninitializedMemory);
-            NativeArray<byte>.Copy(data, 0, _sendBuffer, _sendBufferIndex, count);
+        private void WriteToSendBuffer(uint messageId, WriteMessageDelegate writeMessage) {
+            _writer.Reset();
+            _writer.PutUInt(messageId);
+            writeMessage(_writer);
+            _sendBuffer.Resize(_sendBufferIndex + _writer.Length, NativeArrayOptions.UninitializedMemory);
+            NativeArray<byte>.Copy(_writer.Data, 0, _sendBuffer.AsArray(), _sendBufferIndex, _writer.Length);
         }
 
         public override void Host(ushort port) {
@@ -136,6 +142,7 @@ namespace NetworkLayer.Transports.UTP {
                 OnHost();
             } else {
                 _driver.Dispose();
+                throw new Exception("Server failed to bind or listen!");
             }
         }
 
@@ -186,6 +193,8 @@ namespace NetworkLayer.Transports.UTP {
                 }
             }
             _sendBufferIndex = 0;
+            _pendingSends.Clear();
+            _sendBuffer.Clear();
             while (_mainThreadCallbacks.Count > 0) _mainThreadCallbacks.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
@@ -203,7 +212,7 @@ namespace NetworkLayer.Transports.UTP {
                 EventQueue = _eventQueue,
                 ReceiveBuffer = _receiveBuffer
             };
-            _job = processJob.Schedule(acceptConnectionsJob.Schedule(_driver.ScheduleUpdate(_pendingSends.Length > 1 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default)));
+            _job = processJob.Schedule(acceptConnectionsJob.Schedule(_driver.ScheduleUpdate(_pendingSends.Length > 0 ? sendDataJob.ScheduleParallel(_pendingSends.Length, 1, default) : default)));
         }
 
         public override void Dispose() {
@@ -215,27 +224,31 @@ namespace NetworkLayer.Transports.UTP {
             _acceptedConnections.Dispose();
         }
 
-        protected override void SendToAll(byte[] data, int count, ESendMode sendMode) {
+        public override void SendMessageToAll(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+            if (!IsRunning) return;
             _mainThreadCallbacks.Enqueue(() => {
-                WriteToSendBuffer(data, count);
-                foreach (NetworkConnection connection in _connections.Values) _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, count, sendMode));
-                _sendBufferIndex += count;
+                WriteToSendBuffer(messageId, writeMessage);
+                foreach (NetworkConnection connection in _connections.Values) _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, _writer.Length, sendMode));
+                _sendBufferIndex += _writer.Length;
             });
         }
 
-        protected override void SendToClients(IEnumerable<ulong> clients, byte[] data, int count, ESendMode sendMode) {
+        public override void SendMessageToClients(IEnumerable<ulong> clients, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+            if (!IsRunning) return;
             _mainThreadCallbacks.Enqueue(() => {
-                WriteToSendBuffer(data, count);
-                foreach (ulong client in clients) _pendingSends.Add(new PendingSend(_connections[client], _sendBufferIndex, count, sendMode));
-                _sendBufferIndex += count;
+                WriteToSendBuffer(messageId, writeMessage);
+                foreach (ulong client in clients) if (_connections.TryGetValue(client, out NetworkConnection connection)) _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, _writer.Length, sendMode));
+                _sendBufferIndex += _writer.Length;
             });
         }
 
-        protected override void SendToClient(ulong client, byte[] data, int count, ESendMode sendMode) {
+        public override void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+            if (!IsRunning) return;
             _mainThreadCallbacks.Enqueue(() => {
-                WriteToSendBuffer(data, count);
-                _pendingSends.Add(new PendingSend(_connections[client], _sendBufferIndex, count, sendMode));
-                _sendBufferIndex += count;
+                if (!_connections.TryGetValue(client, out NetworkConnection connection)) return;
+                WriteToSendBuffer(messageId, writeMessage);
+                _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, _writer.Length, sendMode));
+                _sendBufferIndex += _writer.Length;
             });
         }
     }

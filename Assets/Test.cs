@@ -6,6 +6,7 @@ public class Test : MonoBehaviour {
     [ServerMessageReceiver("sendInt", "Test")]
     private static void ReceiveInt(ulong client, MessageReader reader) {
         int i = reader.ReadInt();
+        Debug.Log($"Server - Received {i}.");
         _server.SendMessageToClient(client, "sendInt", writer => writer.PutInt(i), ESendMode.Unreliable);
     }
 
