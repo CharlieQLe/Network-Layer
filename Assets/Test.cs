@@ -3,18 +3,16 @@ using NetworkLayer.Transports.UTP;
 using UnityEngine;
 
 public class Test : MonoBehaviour {
-    [ServerMessageReceiver("sendInt", "Test")]
-    private static void ReceiveInt(ulong client, MessageReader reader) {
-        int i = reader.ReadInt();
-        Debug.Log($"Server - Received {i}.");
-        _server.SendMessageToClient(client, "sendInt", writer => writer.PutInt(i), ESendMode.Unreliable);
+    [ServerMessageReceiver("sendTime", "Test")]
+    private static void ReceiveTime(ulong client, MessageReader reader) {
+        float t = reader.ReadFloat();
+        _server.SendMessageToClient(client, "sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
     }
 
-    [ClientMessageReceiver("sendInt", "Test")]
-    private static void FinishInt(MessageReader reader) {
-        int i = reader.ReadInt();
-        Debug.Log($"Client - Received {i}.");
-        _client.Disconnect();
+    [ClientMessageReceiver("sendTime", "Test")]
+    private static void CalculateRTT(MessageReader reader) {
+        float t = reader.ReadFloat();
+        Debug.Log($"Client - RTT is {(Time.fixedTime - t) * 1000}ms");
     }
     
     private static UTPClientTransport _client;
@@ -25,10 +23,7 @@ public class Test : MonoBehaviour {
         _server = new UTPServerTransport("Test");
 
         _client.OnAttemptConnectionEvent += () => Debug.Log("Client - Connecting to server...");
-        _client.OnConnectEvent += () => {
-            Debug.Log("Client - Connected to server!");
-            _client.SendMessage("sendInt", writer => writer.PutInt(1), ESendMode.Unreliable);
-        };
+        _client.OnConnectEvent += () => Debug.Log("Client - Connected to server!");
         _client.OnDisconnectEvent += () => Debug.Log("Client - Disconnected from server!");
 
         _server.OnHostEvent += () => Debug.Log("Server - Started server!");
@@ -48,6 +43,8 @@ public class Test : MonoBehaviour {
     }
 
     private void FixedUpdate() {
+        float t = Time.fixedTime;
+        _client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
         _client.Update();
         _server.Update();
     }

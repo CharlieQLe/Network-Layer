@@ -36,7 +36,7 @@ namespace NetworkLayer.Transports.UTP {
             public NetworkDriver Driver;
             public NetworkConnection Connection;
             public NativeList<byte> ReceiveBuffer;
-            [ReadOnly] public NativeQueue<ProcessedEvent> EventQueue;
+            [WriteOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
                 int index = 0;
