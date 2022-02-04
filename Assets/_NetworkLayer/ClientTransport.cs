@@ -49,7 +49,7 @@ namespace NetworkLayer {
         public void SendMessage(string messageName, WriteMessageDelegate writeMessage, ESendMode sendMode) => SendMessage(Hash32.Generate(messageName), writeMessage, sendMode);
 
         public void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (State != EClientState.Connected) return; 
+            if (State != EClientState.Connected) return;
             _writer.Reset();
             _writer.PutUInt(messageId);
             writeMessage(_writer);
