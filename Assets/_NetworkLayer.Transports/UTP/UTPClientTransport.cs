@@ -35,8 +35,8 @@ namespace NetworkLayer.Transports.UTP {
         private struct ProcessJob : IJob {
             public NetworkDriver Driver;
             public NetworkConnection Connection;
-            public NativeQueue<ProcessedEvent> EventQueue;
             public NativeList<byte> ReceiveBuffer;
+            [ReadOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
                 int index = 0;

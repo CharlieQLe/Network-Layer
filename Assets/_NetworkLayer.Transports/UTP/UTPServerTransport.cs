@@ -39,19 +39,19 @@ namespace NetworkLayer.Transports.UTP {
         [BurstCompile]
         private struct AcceptConnectionsJob : IJob {
             public NetworkDriver Driver;
-            public NativeQueue<NetworkConnection> AcceptedConnections;
+            [WriteOnly] public NativeQueue<NetworkConnection> AcceptedConnections;
 
             public void Execute() {
                 NetworkConnection connection;
                 while ((connection = Driver.Accept()).IsCreated) AcceptedConnections.Enqueue(connection);
             }
         }
-        
+
         [BurstCompile]
         private struct ProcessJob : IJob {
             public NetworkDriver Driver;
-            public NativeQueue<ProcessedEvent> EventQueue;
             public NativeList<byte> ReceiveBuffer;
+            [WriteOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
                 int index = 0;
@@ -235,7 +235,9 @@ namespace NetworkLayer.Transports.UTP {
             if (!IsRunning) return;
             _mainThreadCallbacks.Enqueue(() => {
                 WriteToSendBuffer(messageId, writeMessage);
-                foreach (ulong client in clients) if (_connections.TryGetValue(client, out NetworkConnection connection)) _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, _writer.Length, sendMode));
+                foreach (ulong client in clients)
+                    if (_connections.TryGetValue(client, out NetworkConnection connection))
+                        _pendingSends.Add(new PendingSend(connection, _sendBufferIndex, _writer.Length, sendMode));
                 _sendBufferIndex += _writer.Length;
             });
         }
