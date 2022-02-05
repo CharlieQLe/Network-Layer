@@ -40,14 +40,13 @@ namespace NetworkLayer.Transports.UTP {
             [WriteOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
-                int index = 0;
                 NetworkEvent.Type type;
                 while ((type = Driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     if (type == NetworkEvent.Type.Data) {
+                        int index = ReceiveBuffer.Length;
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
                         EventQueue.Enqueue(new ProcessedEvent(type, index, reader.Length));
-                        index += reader.Length;
                     } else {
                         if (type == NetworkEvent.Type.Disconnect) Connection[0] = default;
                         EventQueue.Enqueue(new ProcessedEvent(type, 0, 0));
@@ -59,7 +58,6 @@ namespace NetworkLayer.Transports.UTP {
         [BurstCompile]
         private struct SendDataJob : IJobFor {
             public NetworkDriver.Concurrent Driver;
-            public NetworkPipeline UnreliablePipeline;
             public NetworkPipeline ReliablePipeline;
             [ReadOnly] public NativeArray<NetworkConnection> Connection;
             [ReadOnly] public NativeList<PendingSend> PendingSends;
@@ -67,7 +65,7 @@ namespace NetworkLayer.Transports.UTP {
 
             public void Execute(int index) {
                 PendingSend pendingSend = PendingSends[index];
-                if (!Connection[0].IsCreated || Driver.GetConnectionState(Connection[0]) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, Connection[0], out DataStreamWriter writer)) return;
+                if (0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : NetworkPipeline.Null, Connection[0], out DataStreamWriter writer)) return;
                 writer.WriteBytes(SendBuffer.GetSubArray(pendingSend.Index, pendingSend.Length));
                 Driver.EndSend(writer);
             }
@@ -81,7 +79,6 @@ namespace NetworkLayer.Transports.UTP {
         private NativeList<PendingSend> _pendingSends;
         private NativeQueue<ProcessedEvent> _eventQueue;
         private NetworkDriver _driver;
-        private NetworkPipeline _unreliablePipeline;
         private NetworkPipeline _reliablePipeline;
         private JobHandle _job;
 
@@ -93,7 +90,6 @@ namespace NetworkLayer.Transports.UTP {
         public UTPClientTransport(uint messageGroupId) : base(messageGroupId) {
             _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
             _driver = NetworkDriver.Create();
-            _unreliablePipeline = _driver.CreatePipeline(typeof(UnreliableSequencedPipelineStage));
             _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
             _sendBuffer = new NativeList<byte>(1024, Allocator.Persistent);
             _receiveBuffer = new NativeList<byte>(1024, Allocator.Persistent);
@@ -189,7 +185,6 @@ namespace NetworkLayer.Transports.UTP {
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
                 Connection = _connection,
-                UnreliablePipeline = _unreliablePipeline,
                 ReliablePipeline = _reliablePipeline,
                 PendingSends = _pendingSends,
                 SendBuffer = _sendBuffer
@@ -213,7 +208,6 @@ namespace NetworkLayer.Transports.UTP {
             _receiveBuffer.Dispose();
             _pendingSends.Dispose();
             _eventQueue.Dispose();
-            _unreliablePipeline = default;
             _reliablePipeline = default;
         }
 

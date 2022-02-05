@@ -76,7 +76,5 @@ namespace NetworkLayer {
         public abstract void SendMessageToClients(IEnumerable<ulong> clients, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode);
 
         public abstract void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode);
-
-        
     }
 }

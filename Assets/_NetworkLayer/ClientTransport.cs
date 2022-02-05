@@ -4,12 +4,12 @@ using System.Reflection;
 using NetworkLayer.Utils;
 
 namespace NetworkLayer {
-    public enum ESendMode {
+    public enum ESendMode : byte {
         Unreliable,
         Reliable
     }
 
-    public enum EClientState {
+    public enum EClientState : byte {
         Disconnected,
         Connecting,
         Connected

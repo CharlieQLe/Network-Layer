@@ -43,6 +43,7 @@ namespace NetworkLayer.Transports.UTP {
             [WriteOnly] public NativeQueue<ulong> AcceptedConnections;
 
             public void Execute() {
+                if (!Driver.IsCreated) return;
                 NetworkConnection connection;
                 while ((connection = Driver.Accept()).IsCreated) {
                     Connections.Add((ulong) connection.InternalId, connection);
@@ -59,14 +60,14 @@ namespace NetworkLayer.Transports.UTP {
             [WriteOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
-                int index = 0;
+                if (!Driver.IsCreated) return;
                 NetworkEvent.Type type;
                 while ((type = Driver.PopEvent(out NetworkConnection connection, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     if (type == NetworkEvent.Type.Data) {
+                        int index = ReceiveBuffer.Length;
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
                         EventQueue.Enqueue(new ProcessedEvent((ulong) connection.InternalId, type, index, reader.Length));
-                        index += reader.Length;
                     } else {
                         Connections.Remove((ulong) connection.InternalId);
                         EventQueue.Enqueue(new ProcessedEvent((ulong) connection.InternalId, type, 0, 0));
@@ -78,7 +79,6 @@ namespace NetworkLayer.Transports.UTP {
         [BurstCompile]
         private struct SendDataJob : IJobFor {
             public NetworkDriver.Concurrent Driver;
-            public NetworkPipeline UnreliablePipeline;
             public NetworkPipeline ReliablePipeline;
             [ReadOnly] public NativeHashMap<ulong, NetworkConnection> Connections;
             [ReadOnly] public NativeList<PendingSend> PendingSends;
@@ -86,7 +86,7 @@ namespace NetworkLayer.Transports.UTP {
 
             public void Execute(int index) {
                 PendingSend pendingSend = PendingSends[index];
-                if (!Connections.TryGetValue(pendingSend.ConnectionId, out NetworkConnection connection) || Driver.GetConnectionState(connection) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, connection, out DataStreamWriter writer)) return;
+                if (!Connections.TryGetValue(pendingSend.ConnectionId, out NetworkConnection connection) || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : NetworkPipeline.Null, connection, out DataStreamWriter writer)) return;
                 writer.WriteBytes(SendBuffer.GetSubArray(pendingSend.Index, pendingSend.Length));
                 Driver.EndSend(writer);
             }
@@ -102,10 +102,10 @@ namespace NetworkLayer.Transports.UTP {
         private NativeQueue<ProcessedEvent> _eventQueue;
         private NativeQueue<ulong> _acceptedConnections;
         private NetworkDriver _driver;
-        private NetworkPipeline _unreliablePipeline;
         private NetworkPipeline _reliablePipeline;
         private JobHandle _job;
 
+        private bool _isRunning;
         private readonly MessageWriter _writer;
         private readonly MessageReader _reader;
         private readonly Queue<PendingCommandDelegate> _pendingCommandQueue;
@@ -126,7 +126,7 @@ namespace NetworkLayer.Transports.UTP {
 
         public UTPServerTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
-        public override bool IsRunning => _driver.IsCreated;
+        public override bool IsRunning => _isRunning;
 
         private void WriteToSendBuffer(uint messageId, WriteMessageDelegate writeMessage) {
             _writer.Reset();
@@ -146,8 +146,9 @@ namespace NetworkLayer.Transports.UTP {
             endpoint.Port = port;
             _driver = NetworkDriver.Create();
             if (0 == _driver.Bind(endpoint) && 0 == _driver.Listen()) {
-                _unreliablePipeline = _driver.CreatePipeline(typeof(UnreliableSequencedPipelineStage));
                 _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
+                _isRunning = true;
+                OnLog("Server - Hosting server!");
                 OnHost();
             } else {
                 _driver.Dispose();
@@ -170,8 +171,10 @@ namespace NetworkLayer.Transports.UTP {
             _eventQueue.Clear();
             _acceptedConnections.Clear();
             _driver.Dispose();
-            _unreliablePipeline = default;
             _reliablePipeline = default;
+            _isRunning = false;
+            OnLog("Server - Closed server!");
+            OnClose();
         }
 
         public override void Disconnect(ulong client) {
@@ -186,14 +189,19 @@ namespace NetworkLayer.Transports.UTP {
                 }
                 _driver.Disconnect(connection);
                 _connections.Remove(client);
+                OnLog($"Server - Disconnected client {client}!");
                 OnDisconnect(client);
             });
         }
 
         public override void Update() {
             _job.Complete();
+            _isRunning = _driver.IsCreated;
             if (!IsRunning) return;
-            while (_acceptedConnections.TryDequeue(out ulong client)) OnConnect(client);
+            while (_acceptedConnections.TryDequeue(out ulong client)) {
+                OnLog($"Server - Client {client} connected!");
+                OnConnect(client);
+            }
             while (_eventQueue.TryDequeue(out ProcessedEvent networkEvent)) {
                 if (networkEvent.Type == NetworkEvent.Type.Data) {
                     _reader.Reset();
@@ -204,9 +212,12 @@ namespace NetworkLayer.Transports.UTP {
                     } catch (Exception exception) {
                         OnLog($"Server - Error trying to receive data from client { networkEvent.Client }! Message: {exception}");
                     }
-                } else OnDisconnect(networkEvent.Client);
+                }
+                else {
+                    OnLog($"Server - Client {networkEvent.Client} disconnected!");
+                    OnDisconnect(networkEvent.Client);
+                }
             }
-
             while (_pendingCommandQueue.Count > 0) _pendingCommandQueue.Dequeue()();
             _pendingSends.Clear();
             _sendBuffer.Clear();
@@ -214,7 +225,6 @@ namespace NetworkLayer.Transports.UTP {
             while (_sendQueue.Count > 0) _sendQueue.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
-                UnreliablePipeline = _unreliablePipeline,
                 ReliablePipeline = _reliablePipeline,
                 Connections = _connections,
                 PendingSends = _pendingSends,

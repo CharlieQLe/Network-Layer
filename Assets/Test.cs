@@ -27,19 +27,19 @@ public class Test : MonoBehaviour {
     }
 
     private void Start() {
-        _client.Connect("127.0.0.1", 7777);
         _server.Host(7777);
+        _client.Connect("127.0.0.1", 7777);
     }
 
     private void OnDestroy() {
-        _client.Dispose();
         _server.Dispose();
+        _client.Dispose();
     }
 
     private void FixedUpdate() {
+        _server.Update();
         float t = Time.fixedTime;
         _client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
-        _server.Update();
         _client.Update();
     }
 }
