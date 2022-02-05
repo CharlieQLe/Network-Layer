@@ -19,12 +19,14 @@ namespace NetworkLayer {
         public delegate void AttemptConnectionDelegate();
         public delegate void ConnectDelegate();
         public delegate void DisconnectDelegate();
+        public delegate void LogDelegate(object message);
         public delegate void WriteMessageDelegate(MessageWriter writer);
         private delegate void ReceiveMessageDelegate(MessageReader reader);
         
         public event AttemptConnectionDelegate OnAttemptConnectionEvent;
         public event ConnectDelegate OnConnectEvent;
         public event DisconnectDelegate OnDisconnectEvent;
+        public event LogDelegate OnLogEvent;
         
         private readonly Dictionary<uint, ReceiveMessageDelegate> _receiveMessageCallbacks;
         
@@ -51,6 +53,8 @@ namespace NetworkLayer {
         protected void OnConnect() => OnConnectEvent?.Invoke();
 
         protected void OnDisconnect() => OnDisconnectEvent?.Invoke();
+
+        protected void OnLog(object message) => OnLogEvent?.Invoke(message);
         
         protected void OnReceiveMessage(MessageReader reader) {
             uint messageId = reader.ReadUInt();

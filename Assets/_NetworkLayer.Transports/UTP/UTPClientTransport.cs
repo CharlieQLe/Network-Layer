@@ -1,10 +1,10 @@
+using System;
 using System.Collections.Generic;
 using NetworkLayer.Utils;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
-using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     public class UTPClientTransport : ClientTransport {
@@ -35,20 +35,21 @@ namespace NetworkLayer.Transports.UTP {
         [BurstCompile]
         private struct ProcessJob : IJob {
             public NetworkDriver Driver;
-            public NetworkConnection Connection;
             public NativeList<byte> ReceiveBuffer;
+            [WriteOnly] public NativeArray<NetworkConnection> Connection;
             [WriteOnly] public NativeQueue<ProcessedEvent> EventQueue;
 
             public void Execute() {
                 int index = 0;
                 NetworkEvent.Type type;
-                while ((type = Driver.PopEventForConnection(Connection, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
+                while ((type = Driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     if (type == NetworkEvent.Type.Data) {
                         ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
                         EventQueue.Enqueue(new ProcessedEvent(type, index, reader.Length));
                         index += reader.Length;
                     } else {
+                        if (type == NetworkEvent.Type.Disconnect) Connection[0] = default;
                         EventQueue.Enqueue(new ProcessedEvent(type, 0, 0));
                     }
                 }
@@ -58,23 +59,23 @@ namespace NetworkLayer.Transports.UTP {
         [BurstCompile]
         private struct SendDataJob : IJobFor {
             public NetworkDriver.Concurrent Driver;
-            public NetworkConnection Connection;
             public NetworkPipeline UnreliablePipeline;
             public NetworkPipeline ReliablePipeline;
+            [ReadOnly] public NativeArray<NetworkConnection> Connection;
             [ReadOnly] public NativeList<PendingSend> PendingSends;
-            [ReadOnly, NativeDisableParallelForRestriction]
-            public NativeArray<byte> SendBuffer;
+            [ReadOnly] public NativeArray<byte> SendBuffer;
 
             public void Execute(int index) {
                 PendingSend pendingSend = PendingSends[index];
-                if (!Connection.IsCreated || Driver.GetConnectionState(Connection) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, Connection, out DataStreamWriter writer)) return;
+                if (!Connection[0].IsCreated || Driver.GetConnectionState(Connection[0]) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(pendingSend.SendMode == ESendMode.Reliable ? ReliablePipeline : UnreliablePipeline, Connection[0], out DataStreamWriter writer)) return;
                 writer.WriteBytes(SendBuffer.GetSubArray(pendingSend.Index, pendingSend.Length));
                 Driver.EndSend(writer);
             }
         }
 
-        private delegate void MainThreadDelegate();
+        private delegate void SendDelegate();
 
+        private NativeArray<NetworkConnection> _connection;
         private NativeList<byte> _sendBuffer;
         private NativeList<byte> _receiveBuffer;
         private NativeList<PendingSend> _pendingSends;
@@ -82,16 +83,15 @@ namespace NetworkLayer.Transports.UTP {
         private NetworkDriver _driver;
         private NetworkPipeline _unreliablePipeline;
         private NetworkPipeline _reliablePipeline;
-        private NetworkConnection _connection;
         private JobHandle _job;
 
-        private int _sendBufferIndex;
         private EClientState _state;
         private readonly MessageWriter _writer;
         private readonly MessageReader _reader;
-        private readonly Queue<MainThreadDelegate> _mainThreadCallbacks;
+        private readonly Queue<SendDelegate> _sendQueue;
 
         public UTPClientTransport(uint messageGroupId) : base(messageGroupId) {
+            _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
             _driver = NetworkDriver.Create();
             _unreliablePipeline = _driver.CreatePipeline(typeof(UnreliableSequencedPipelineStage));
             _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
@@ -101,7 +101,7 @@ namespace NetworkLayer.Transports.UTP {
             _eventQueue = new NativeQueue<ProcessedEvent>(Allocator.Persistent);
             _writer = new MessageWriter();
             _reader = new MessageReader();
-            _mainThreadCallbacks = new Queue<MainThreadDelegate>();
+            _sendQueue = new Queue<SendDelegate>();
         }
 
         public UTPClientTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
@@ -109,34 +109,49 @@ namespace NetworkLayer.Transports.UTP {
         public override EClientState State => _connection.IsCreated ? _state : EClientState.Disconnected;
 
         public override void Connect(string address, ushort port) {
-            if (State != EClientState.Disconnected) return;
+            if (State != EClientState.Disconnected) {
+                OnLog("Client - Cannot attempt connection. Reason: already connecting/connected!");
+                return;
+            }
             NetworkEndPoint endpoint;
             if (address == "localhost" || address == "127.0.0.1") {
                 endpoint = NetworkEndPoint.LoopbackIpv4;
                 endpoint.Port = port;
-            } else if (!NetworkEndPoint.TryParse(address, port, out endpoint)) return;
-            _connection = _driver.Connect(endpoint);
-            _state = EClientState.Connecting;
+            } else if (!NetworkEndPoint.TryParse(address, port, out endpoint)) {
+                OnLog("Client - Cannot attempt connection. Reason: endpoint could not be resolved!");
+                return;
+            }
+            _connection[0] = _driver.Connect(endpoint);
+            _state = _driver.GetConnectionState(_connection[0]) switch {
+                NetworkConnection.State.Connected => EClientState.Connected,
+                NetworkConnection.State.Connecting => EClientState.Connecting,
+                _ => EClientState.Disconnected
+            };
+            OnLog("Client - Attempting to connect to the server...");
             OnAttemptConnection();
         }
 
         public override void Disconnect() {
-            if (State == EClientState.Disconnected) return;
+            if (State == EClientState.Disconnected) {
+                OnLog("Client - Cannot disconnect. Reason: already disconnected!");
+                return;
+            }
             _job.Complete();
-            _driver.Disconnect(_connection);
+            _driver.Disconnect(_connection[0]);
             _driver.ScheduleFlushSend(default).Complete();
-            _connection = default;
+            _connection[0] = default;
             _state = EClientState.Disconnected;
             _pendingSends.Clear();
             _eventQueue.Clear();
-            _mainThreadCallbacks.Clear();
+            _sendQueue.Clear();
+            OnLog("Client - Disconnected from the server!");
             OnDisconnect();
         }
 
         public override void Update() {
             _job.Complete();
-            if (State == EClientState.Disconnected) return;
-            _state = _driver.GetConnectionState(_connection) switch {
+            if (!_connection[0].IsCreated) return;
+            _state = _driver.GetConnectionState(_connection[0]) switch {
                 NetworkConnection.State.Connected => EClientState.Connected,
                 NetworkConnection.State.Connecting => EClientState.Connecting,
                 _ => EClientState.Disconnected
@@ -144,6 +159,7 @@ namespace NetworkLayer.Transports.UTP {
             while (_eventQueue.TryDequeue(out ProcessedEvent networkEvent)) {
                 switch (networkEvent.Type) {
                     case NetworkEvent.Type.Connect: {
+                        OnLog("Client - Connected to the server!");
                         OnConnect();
                         break;
                     }
@@ -151,22 +167,25 @@ namespace NetworkLayer.Transports.UTP {
                         _reader.Reset();
                         _reader.Resize(networkEvent.Length);
                         NativeArray<byte>.Copy(_receiveBuffer, networkEvent.Index, _reader.Data, 0, networkEvent.Length);
-                        OnReceiveMessage(_reader);
+                        try {
+                            OnReceiveMessage(_reader);
+                        } catch (Exception exception) {
+                            OnLog($"Client - Error trying to receive data! Message: {exception}");
+                        }
                         break;
                     }
                     case NetworkEvent.Type.Disconnect: {
-                        _connection = default;
                         _state = EClientState.Disconnected;
+                        OnLog("Client - Disconnected from the server!");
                         OnDisconnect();
                         break;
                     }
                 }
             }
-            _sendBufferIndex = 0;
             _pendingSends.Clear();
             _sendBuffer.Clear();
             _receiveBuffer.Clear();
-            while (_mainThreadCallbacks.Count > 0) _mainThreadCallbacks.Dequeue()();
+            while (_sendQueue.Count > 0) _sendQueue.Dequeue()();
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
                 Connection = _connection,
@@ -188,6 +207,7 @@ namespace NetworkLayer.Transports.UTP {
 
         public override void Dispose() {
             Disconnect();
+            _connection.Dispose();
             _driver.Dispose();
             _sendBuffer.Dispose();
             _receiveBuffer.Dispose();
@@ -198,16 +218,22 @@ namespace NetworkLayer.Transports.UTP {
         }
 
         public override void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (State != EClientState.Connected) return;
-            _mainThreadCallbacks.Enqueue(() => {
-                if (State != EClientState.Connected) return;
+            if (State != EClientState.Connected) {
+                OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
+                return;
+            }
+            _sendQueue.Enqueue(() => {
+                if (State != EClientState.Connected) {
+                    OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
+                    return;
+                }
                 _writer.Reset();
                 _writer.PutUInt(messageId);
                 writeMessage(_writer);
-                _sendBuffer.ResizeUninitialized(_sendBufferIndex + _writer.Length);
-                NativeArray<byte>.Copy(_writer.Data, 0, _sendBuffer.AsArray(), _sendBufferIndex, _writer.Length);
-                _pendingSends.Add(new PendingSend(_sendBufferIndex, _writer.Length, sendMode));
-                _sendBufferIndex = _sendBuffer.Length;
+                int index = _writer.Length;
+                _sendBuffer.ResizeUninitialized(index + _writer.Length);
+                NativeArray<byte>.Copy(_writer.Data, 0, _sendBuffer.AsArray(), index, _writer.Length);
+                _pendingSends.Add(new PendingSend(index, _writer.Length, sendMode));
             });
         }
     }

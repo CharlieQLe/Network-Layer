@@ -22,14 +22,8 @@ public class Test : MonoBehaviour {
         _client = new UTPClientTransport("Test");
         _server = new UTPServerTransport("Test");
 
-        _client.OnAttemptConnectionEvent += () => Debug.Log("Client - Connecting to server...");
-        _client.OnConnectEvent += () => Debug.Log("Client - Connected to server!");
-        _client.OnDisconnectEvent += () => Debug.Log("Client - Disconnected from server!");
-
-        _server.OnHostEvent += () => Debug.Log("Server - Started server!");
-        _server.OnCloseEvent += () => Debug.Log("Server - Closed server!");
-        _server.OnConnectEvent += (client) => Debug.Log($"Server - Client {client} connected to server!");
-        _server.OnDisconnectEvent += (client) => Debug.Log($"Server - Client {client} disconnected from server!");
+        _client.OnLogEvent += Debug.Log;
+        _server.OnLogEvent += Debug.Log;
     }
 
     private void Start() {
@@ -43,8 +37,8 @@ public class Test : MonoBehaviour {
     }
 
     private void FixedUpdate() {
-        //float t = Time.fixedTime;
-        //_client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
+        float t = Time.fixedTime;
+        _client.SendMessage("sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
         _server.Update();
         _client.Update();
     }
