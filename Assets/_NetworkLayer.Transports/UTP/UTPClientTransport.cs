@@ -224,7 +224,7 @@ namespace NetworkLayer.Transports.UTP {
                 _writer.Reset();
                 _writer.PutUInt(messageId);
                 writeMessage(_writer);
-                int index = _writer.Length;
+                int index = _sendBuffer.Length;
                 _sendBuffer.ResizeUninitialized(index + _writer.Length);
                 NativeArray<byte>.Copy(_writer.Data, 0, _sendBuffer.AsArray(), index, _writer.Length);
                 _pendingSends.Add(new PendingSend(index, _writer.Length, sendMode));

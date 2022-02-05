@@ -108,7 +108,7 @@ namespace NetworkLayer.Transports.UTP {
         private bool _isRunning;
         private readonly MessageWriter _writer;
         private readonly MessageReader _reader;
-        private readonly Queue<PendingCommandDelegate> _pendingCommandQueue;
+        private readonly Queue<PendingCommandDelegate> _disconnectQueue;
         private readonly Queue<SendDelegate> _sendQueue;
 
         public UTPServerTransport(uint messageGroupId) : base(messageGroupId) {
@@ -120,7 +120,7 @@ namespace NetworkLayer.Transports.UTP {
             _acceptedConnections = new NativeQueue<ulong>(Allocator.Persistent);
             _writer = new MessageWriter();
             _reader = new MessageReader();
-            _pendingCommandQueue = new Queue<PendingCommandDelegate>();
+            _disconnectQueue = new Queue<PendingCommandDelegate>();
             _sendQueue = new Queue<SendDelegate>();
         }
 
@@ -166,7 +166,7 @@ namespace NetworkLayer.Transports.UTP {
             for (int i = 0; i < connections.Length; i++) _driver.Disconnect(connections[i]);
             _driver.ScheduleFlushSend(default).Complete();
             _connections.Clear();
-            _pendingCommandQueue.Clear();
+            _disconnectQueue.Clear();
             _sendQueue.Clear();
             _eventQueue.Clear();
             _acceptedConnections.Clear();
@@ -182,7 +182,7 @@ namespace NetworkLayer.Transports.UTP {
                 OnLog($"Server - Cannot disconnect client {client}. Reason: server is closed!");
                 return;
             }
-            _pendingCommandQueue.Enqueue(() => {
+            _disconnectQueue.Enqueue(() => {
                 if (!_connections.TryGetValue(client, out NetworkConnection connection)) {
                     OnLog($"Server - Cannot disconnect client {client}. Reason: client not found!");
                     return;
@@ -218,7 +218,7 @@ namespace NetworkLayer.Transports.UTP {
                     OnDisconnect(networkEvent.Client);
                 }
             }
-            while (_pendingCommandQueue.Count > 0) _pendingCommandQueue.Dequeue()();
+            while (_disconnectQueue.Count > 0) _disconnectQueue.Dequeue()();
             _pendingSends.Clear();
             _sendBuffer.Clear();
             _receiveBuffer.Clear();
