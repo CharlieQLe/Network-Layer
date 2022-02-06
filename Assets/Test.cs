@@ -4,13 +4,13 @@ using UnityEngine;
 
 public class Test : MonoBehaviour {
     [ServerMessageReceiver("sendTime", "Test")]
-    private static void ReceiveTime(ulong client, MessageReader reader) {
+    private static void ReceiveTime(ulong client, Message.Reader reader) {
         float t = reader.ReadFloat();
         _server.SendMessageToClient(client, "sendTime", writer => writer.PutFloat(t), ESendMode.Unreliable);
     }
 
     [ClientMessageReceiver("sendTime", "Test")]
-    private static void CalculateRTT(MessageReader reader) {
+    private static void CalculateRTT(Message.Reader reader) {
         float t = reader.ReadFloat();
         Debug.Log($"Client - RTT is {(Time.fixedTime - t) * 1000}ms");
     }

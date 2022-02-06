@@ -9,9 +9,9 @@ namespace NetworkLayer {
         public delegate void CloseDelegate();
         public delegate void ConnectDelegate(ulong client);
         public delegate void DisconnectDelegate(ulong client);
-        public delegate void WriteMessageDelegate(MessageWriter writer);
+        public delegate void WriteMessageDelegate(Message.Writer writer);
         public delegate void LogDelegate(object message);
-        private delegate void ReceiveMessageDelegate(ulong client, MessageReader reader);
+        private delegate void ReceiveMessageDelegate(ulong client, Message.Reader reader);
         
         public event HostDelegate OnHostEvent;
         public event CloseDelegate OnCloseEvent;
@@ -53,7 +53,7 @@ namespace NetworkLayer {
 
         protected void OnLog(object message) => OnLogEvent?.Invoke(message);
         
-        protected void OnReceiveMessage(ulong client, MessageReader reader) {
+        protected void OnReceiveMessage(ulong client, Message.Reader reader) {
             uint messageId = reader.ReadUInt();
             if (!_receiveMessageCallbacks.TryGetValue(messageId, out ReceiveMessageDelegate callback)) throw new Exception($"Message id { messageId } has no associated callback!");
             callback(client, reader);

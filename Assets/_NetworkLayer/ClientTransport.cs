@@ -20,8 +20,8 @@ namespace NetworkLayer {
         public delegate void ConnectDelegate();
         public delegate void DisconnectDelegate();
         public delegate void LogDelegate(object message);
-        public delegate void WriteMessageDelegate(MessageWriter writer);
-        private delegate void ReceiveMessageDelegate(MessageReader reader);
+        public delegate void WriteMessageDelegate(Message.Writer writer);
+        private delegate void ReceiveMessageDelegate(Message.Reader reader);
         
         public event AttemptConnectionDelegate OnAttemptConnectionEvent;
         public event ConnectDelegate OnConnectEvent;
@@ -56,7 +56,7 @@ namespace NetworkLayer {
 
         protected void OnLog(object message) => OnLogEvent?.Invoke(message);
         
-        protected void OnReceiveMessage(MessageReader reader) {
+        protected void OnReceiveMessage(Message.Reader reader) {
             uint messageId = reader.ReadUInt();
             if (!_receiveMessageCallbacks.TryGetValue(messageId, out ReceiveMessageDelegate callback)) throw new Exception($"Message id { messageId } has no associated callback!");
             callback(reader);
