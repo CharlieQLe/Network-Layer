@@ -11,12 +11,14 @@ namespace NetworkLayer {
         public delegate void DisconnectDelegate(ulong client);
         public delegate void WriteMessageDelegate(Message.Writer writer);
         public delegate void LogDelegate(object message);
+        public delegate void UpdateDelegate();
         private delegate void ReceiveMessageDelegate(ulong client, Message.Reader reader);
         
         public event HostDelegate OnHostEvent;
         public event CloseDelegate OnCloseEvent;
         public event ConnectDelegate OnConnectEvent;
         public event DisconnectDelegate OnDisconnectEvent;
+        public event UpdateDelegate OnUpdateEvent;
         public event LogDelegate OnLogEvent;
         
         private readonly Dictionary<uint, ReceiveMessageDelegate> _receiveMessageCallbacks;
@@ -51,6 +53,8 @@ namespace NetworkLayer {
 
         protected void OnDisconnect(ulong client) => OnDisconnectEvent?.Invoke(client);
 
+        protected void OnUpdate() => OnUpdateEvent?.Invoke();
+        
         protected void OnLog(object message) => OnLogEvent?.Invoke(message);
         
         protected void OnReceiveMessage(ulong client, Message.Reader reader) {

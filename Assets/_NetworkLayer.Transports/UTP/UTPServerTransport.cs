@@ -105,7 +105,6 @@ namespace NetworkLayer.Transports.UTP {
         private NetworkPipeline _reliablePipeline;
         private JobHandle _job;
 
-        private bool _isRunning;
         private readonly Message _message;
         private readonly Queue<PendingDisconnectDelegate> _pendingDisconnectQueue;
         private readonly Queue<SendDelegate> _sendQueue;
@@ -124,7 +123,7 @@ namespace NetworkLayer.Transports.UTP {
 
         public UTPServerTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
-        public override bool IsRunning => _isRunning;
+        public override bool IsRunning => _driver.IsCreated;
 
         private void WriteToSendBuffer(uint messageId, WriteMessageDelegate writeMessage) {
             _message.Reset();
@@ -145,7 +144,6 @@ namespace NetworkLayer.Transports.UTP {
             _driver = NetworkDriver.Create();
             if (0 == _driver.Bind(endpoint) && 0 == _driver.Listen()) {
                 _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
-                _isRunning = true;
                 OnLog("Server - Hosting server!");
                 OnHost();
             } else {
@@ -170,7 +168,6 @@ namespace NetworkLayer.Transports.UTP {
             _acceptedConnections.Clear();
             _driver.Dispose();
             _reliablePipeline = default;
-            _isRunning = false;
             OnLog("Server - Closed server!");
             OnClose();
         }
@@ -194,7 +191,6 @@ namespace NetworkLayer.Transports.UTP {
 
         public override void Update() {
             _job.Complete();
-            _isRunning = _driver.IsCreated;
             if (!IsRunning) return;
             while (_acceptedConnections.TryDequeue(out ulong client)) {
                 OnLog($"Server - Client {client} connected!");
@@ -243,6 +239,7 @@ namespace NetworkLayer.Transports.UTP {
             _job = _driver.ScheduleUpdate(_job);
             _job = acceptConnectionsJob.Schedule(_job);
             _job = processJob.Schedule(_job);
+            OnUpdate();
         }
 
         public override void Dispose() {

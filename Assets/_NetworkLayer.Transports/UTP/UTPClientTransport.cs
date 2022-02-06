@@ -100,7 +100,13 @@ namespace NetworkLayer.Transports.UTP {
 
         public UTPClientTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
-        public override EClientState State => _connection.IsCreated ? _state : EClientState.Disconnected;
+        private EClientState ConvertConnectionState(NetworkConnection.State state) => state switch {
+            NetworkConnection.State.Connected => EClientState.Connected,
+            NetworkConnection.State.Connecting => EClientState.Connecting,
+            _ => EClientState.Disconnected
+        };
+        
+        public override EClientState State => _state;
 
         public override void Connect(string address, ushort port) {
             if (State != EClientState.Disconnected) {
@@ -116,11 +122,7 @@ namespace NetworkLayer.Transports.UTP {
                 return;
             }
             _connection[0] = _driver.Connect(endpoint);
-            _state = _driver.GetConnectionState(_connection[0]) switch {
-                NetworkConnection.State.Connected => EClientState.Connected,
-                NetworkConnection.State.Connecting => EClientState.Connecting,
-                _ => EClientState.Disconnected
-            };
+            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
             OnLog("Client - Attempting to connect to the server...");
             OnAttemptConnection();
         }
@@ -144,12 +146,8 @@ namespace NetworkLayer.Transports.UTP {
 
         public override void Update() {
             _job.Complete();
+            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
             if (!_connection[0].IsCreated) return;
-            _state = _driver.GetConnectionState(_connection[0]) switch {
-                NetworkConnection.State.Connected => EClientState.Connected,
-                NetworkConnection.State.Connecting => EClientState.Connecting,
-                _ => EClientState.Disconnected
-            };
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {
                 switch (networkEvent.Type) {
                     case NetworkEvent.Type.Connect: {
@@ -196,6 +194,7 @@ namespace NetworkLayer.Transports.UTP {
             _job = _sendData.Length > 0 ? sendDataJob.ScheduleParallel(_sendData.Length, 1, default) : default;
             _job = _driver.ScheduleUpdate(_job);
             _job = processJob.Schedule(_job);
+            OnUpdate();
         }
 
         public override void Dispose() {
