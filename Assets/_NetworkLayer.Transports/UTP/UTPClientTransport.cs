@@ -7,10 +7,27 @@ using Unity.Jobs;
 using Unity.Networking.Transport;
 
 namespace NetworkLayer.Transports.UTP {
+    /// <summary>
+    /// The client transport for the Unity Transport Package
+    /// </summary>
     public class UTPClientTransport : ClientTransport {
+        /// <summary>
+        /// The send data
+        /// </summary>
         private readonly struct SendData {
+            /// <summary>
+            /// The index in the send buffer the data exists at
+            /// </summary>
             public readonly int Index;
+            
+            /// <summary>
+            /// The length of the data to send
+            /// </summary>
             public readonly int Length;
+            
+            /// <summary>
+            /// The send mode
+            /// </summary>
             public readonly ESendMode SendMode;
 
             public SendData(int index, int length, ESendMode sendMode) {
@@ -20,9 +37,23 @@ namespace NetworkLayer.Transports.UTP {
             }
         }
 
+        /// <summary>
+        /// The data of the event
+        /// </summary>
         private readonly struct EventData {
+            /// <summary>
+            /// The event type
+            /// </summary>
             public readonly NetworkEvent.Type Type;
+            
+            /// <summary>
+            /// The index in the receive buffer the data exists at
+            /// </summary>
             public readonly int Index;
+            
+            /// <summary>
+            /// The length of the data in the receive buffer
+            /// </summary>
             public readonly int Length;
 
             public EventData(NetworkEvent.Type type, int index, int length) {
@@ -32,42 +63,100 @@ namespace NetworkLayer.Transports.UTP {
             }
         }
         
-        [BurstCompile]
-        private struct ProcessJob : IJob {
-            public NetworkDriver Driver;
-            public NativeList<byte> ReceiveBuffer;
-            [WriteOnly] public NativeArray<NetworkConnection> Connection;
-            [WriteOnly] public NativeQueue<EventData> EventQueue;
-
-            public void Execute() {
-                NetworkEvent.Type type;
-                while ((type = Driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
-                    if (type == NetworkEvent.Type.Data) {
-                        int index = ReceiveBuffer.Length;
-                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
-                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
-                        EventQueue.Enqueue(new EventData(type, index, reader.Length));
-                    } else {
-                        if (type == NetworkEvent.Type.Disconnect) Connection[0] = default;
-                        EventQueue.Enqueue(new EventData(type, 0, 0));
-                    }
-                }
-            }
-        }
-
+        /// <summary>
+        /// The send data job
+        /// </summary>
         [BurstCompile]
         private struct SendDataJob : IJobFor {
+            /// <summary>
+            /// The concurrent network driver
+            /// </summary>
             public NetworkDriver.Concurrent Driver;
+            
+            /// <summary>
+            /// The reliable pipeline
+            /// </summary>
             public NetworkPipeline ReliablePipeline;
+            
+            /// <summary>
+            /// The connection to the server
+            /// </summary>
             [ReadOnly] public NativeArray<NetworkConnection> Connection;
-            [ReadOnly] public NativeList<SendData> SendData;
+            
+            /// <summary>
+            /// All of the send data
+            /// </summary>
+            [ReadOnly] public NativeList<SendData> SendList;
+            
+            /// <summary>
+            /// The send buffer
+            /// </summary>
             [ReadOnly] public NativeArray<byte> SendBuffer;
 
             public void Execute(int index) {
-                SendData sendData = SendData[index];
+                // Get the send data
+                SendData sendData = SendList[index];
+                
+                // Do nothing if the data cannot be send
                 if (0 != Driver.BeginSend(sendData.SendMode == ESendMode.Reliable ? ReliablePipeline : NetworkPipeline.Null, Connection[0], out DataStreamWriter writer)) return;
+                
+                // Write to the data stream from the send buffer
                 writer.WriteBytes(SendBuffer.GetSubArray(sendData.Index, sendData.Length));
+                
+                // End the send
                 Driver.EndSend(writer);
+            }
+        }
+
+        /// <summary>
+        /// Process every event
+        /// </summary>
+        [BurstCompile]
+        private struct ProcessJob : IJob {
+            /// <summary>
+            /// The network driver
+            /// </summary>
+            public NetworkDriver Driver;
+            
+            /// <summary>
+            /// The receive buffer
+            /// </summary>
+            public NativeList<byte> ReceiveBuffer;
+            
+            /// <summary>
+            /// The connection to the server
+            /// </summary>
+            [WriteOnly] public NativeArray<NetworkConnection> Connection;
+            
+            /// <summary>
+            /// The event queue
+            /// </summary>
+            [WriteOnly] public NativeQueue<EventData> EventQueue;
+
+            public void Execute() {
+                // Pop every event
+                NetworkEvent.Type type;
+                while ((type = Driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
+                    // If this is a connect event, simply enqueue the event
+                    // Otherwise, handle the data in the stream
+                    if (type == NetworkEvent.Type.Connect) EventQueue.Enqueue(new EventData(type, 0, 0));
+                    else {
+                        // Set the connection to default if it is a disconnect event
+                        if (type == NetworkEvent.Type.Disconnect) Connection[0] = default;
+                        
+                        // Cache the buffer size
+                        int index = ReceiveBuffer.Length;
+                        
+                        // Resize the buffer
+                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
+                        
+                        // Read the data into the buffer
+                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
+                        
+                        // Enqueue the event data
+                        EventQueue.Enqueue(new EventData(type, index, reader.Length));   
+                    }
+                }
             }
         }
 
@@ -100,6 +189,11 @@ namespace NetworkLayer.Transports.UTP {
 
         public UTPClientTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
 
+        /// <summary>
+        /// Convert the network connection state to the client state.
+        /// </summary>
+        /// <param name="state"></param>
+        /// <returns></returns>
         private EClientState ConvertConnectionState(NetworkConnection.State state) => state switch {
             NetworkConnection.State.Connected => EClientState.Connected,
             NetworkConnection.State.Connecting => EClientState.Connecting,
@@ -109,10 +203,13 @@ namespace NetworkLayer.Transports.UTP {
         public override EClientState State => _state;
 
         public override void Connect(string address, ushort port) {
+            // Do nothing if not disconnected
             if (State != EClientState.Disconnected) {
                 OnLog("Client - Cannot attempt connection. Reason: already connecting/connected!");
                 return;
             }
+            
+            // Try to parse the endpoint. If it fails, do nothing
             NetworkEndPoint endpoint;
             if (address == "localhost" || address == "127.0.0.1") {
                 endpoint = NetworkEndPoint.LoopbackIpv4;
@@ -121,44 +218,76 @@ namespace NetworkLayer.Transports.UTP {
                 OnLog("Client - Cannot attempt connection. Reason: endpoint could not be resolved!");
                 return;
             }
+            
+            // Try to connect
             _connection[0] = _driver.Connect(endpoint);
+            
+            // Set the connection state
             _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
+            
+            // Raise the attempt connection event
             OnLog("Client - Attempting to connect to the server...");
             OnAttemptConnection();
         }
 
         public override void Disconnect() {
+            // Do nothing if already disconnected
             if (State == EClientState.Disconnected) {
                 OnLog("Client - Cannot disconnect. Reason: already disconnected!");
                 return;
             }
+            
+            // Complete the job
             _job.Complete();
+            
+            // Disconnect the connection
             _driver.Disconnect(_connection[0]);
+            
+            // Send all pending events 
             _driver.ScheduleFlushSend(default).Complete();
+            
+            // Set the connection to default
             _connection[0] = default;
             _state = EClientState.Disconnected;
+            
+            // Clear data
             _sendData.Clear();
             _eventQueue.Clear();
             _sendQueue.Clear();
+            
+            // Raise disconnect event
             OnLog("Client - Disconnected from the server!");
             OnDisconnect();
         }
 
         public override void Update() {
+            // Complete the job
             _job.Complete();
+            
+            // Update the connection state
             _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
+            
+            // Do nothing if the connection is not available
             if (!_connection[0].IsCreated) return;
+            
+            // Dequeue all events
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {
                 switch (networkEvent.Type) {
                     case NetworkEvent.Type.Connect: {
+                        // Raise the connect event
                         OnLog("Client - Connected to the server!");
                         OnConnect();
                         break;
                     }
                     case NetworkEvent.Type.Data: {
+                        // Reset and resize the message
                         _message.Reset();
                         _message.Resize(networkEvent.Length);
+                        
+                        // Copy the buffer into the message
                         NativeArray<byte>.Copy(_receiveBuffer, networkEvent.Index, _message.Data, 0, networkEvent.Length);
+                        
+                        // Try to receive the message
                         try {
                             OnReceiveMessage(_message.AsReader);
                         } catch (Exception exception) {
@@ -167,22 +296,31 @@ namespace NetworkLayer.Transports.UTP {
                         break;
                     }
                     case NetworkEvent.Type.Disconnect: {
+                        // Handle the disconnect event
                         _state = EClientState.Disconnected;
+                        
+                        // Raise the disconnect event
                         OnLog("Client - Disconnected from the server!");
                         OnDisconnect();
                         break;
                     }
                 }
             }
+            
+            // Clear data and buffers
             _sendData.Clear();
             _sendBuffer.Clear();
             _receiveBuffer.Clear();
+            
+            // Process the send data
             while (_sendQueue.Count > 0) _sendQueue.Dequeue()();
+            
+            // Create jobs
             SendDataJob sendDataJob = new SendDataJob {
                 Driver = _driver.ToConcurrent(),
                 Connection = _connection,
                 ReliablePipeline = _reliablePipeline,
-                SendData = _sendData,
+                SendList = _sendData,
                 SendBuffer = _sendBuffer
             };
             ProcessJob processJob = new ProcessJob {
@@ -191,9 +329,13 @@ namespace NetworkLayer.Transports.UTP {
                 EventQueue = _eventQueue,
                 ReceiveBuffer = _receiveBuffer
             };
+            
+            // Schedule jobs
             _job = _sendData.Length > 0 ? sendDataJob.ScheduleParallel(_sendData.Length, 1, default) : default;
             _job = _driver.ScheduleUpdate(_job);
             _job = processJob.Schedule(_job);
+            
+            // Raise the update event
             OnUpdate();
         }
 
@@ -209,21 +351,29 @@ namespace NetworkLayer.Transports.UTP {
         }
 
         public override void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+            // Do nothing if not connected
             if (State != EClientState.Connected) {
                 OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
                 return;
             }
             _sendQueue.Enqueue(() => {
+                // Do nothing if not connected
                 if (State != EClientState.Connected) {
                     OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
                     return;
                 }
+                
+                // Write the data into the message
                 _message.Reset();
                 _message.AsWriter.PutUInt(messageId);
                 writeMessage(_message.AsWriter);
+                
+                // Copy the message data into the send buffer
                 int index = _sendBuffer.Length;
                 _sendBuffer.ResizeUninitialized(index + _message.Length);
                 NativeArray<byte>.Copy(_message.Data, 0, _sendBuffer.AsArray(), index, _message.Length);
+                
+                // Add the send data
                 _sendData.Add(new SendData(index, _message.Length, sendMode));
             });
         }

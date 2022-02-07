@@ -1,60 +1,76 @@
-using System;
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace NetworkLayer {
     public abstract class ClientManager<T> : MonoBehaviour where T : ClientManager<T> {
+        /// <summary>
+        /// The client instance.
+        /// </summary>
         public static T Singleton { get; private set; }
 
-        [SerializeField] private UnityEvent onAttemptConnection;
-        [SerializeField] private UnityEvent onConnect;
-        [SerializeField] private UnityEvent onDisconnect;
-        [SerializeField] private UnityEvent onUpdate;
-        [SerializeField] private UnityEvent<object> onLog;
-
+        /// <summary>
+        /// Raised when the client tries to connect
+        /// </summary>
         public event ClientTransport.AttemptConnectionDelegate OnAttemptConnectionEvent;
+        
+        /// <summary>
+        /// Raised when the client connects
+        /// </summary>
         public event ClientTransport.ConnectDelegate OnConnectEvent;
+        
+        /// <summary>
+        /// Raised when the client disconnects
+        /// </summary>
         public event ClientTransport.DisconnectDelegate OnDisconnectEvent;
+        
+        /// <summary>
+        /// Raised when the client updates
+        /// </summary>
         public event ClientTransport.UpdateDelegate OnUpdateEvent;
+        
+        /// <summary>
+        /// Raised when the client logs
+        /// </summary>
         public event ClientTransport.LogDelegate OnLogEvent;
         
         public ClientTransport Transport { get; private set; }
         
         private void Awake() {
+            // Handle singleton
             if (Singleton) {
                 Destroy(this);
                 return;
             }
+            DontDestroyOnLoad(this);
             Singleton = (T) this;
+            
+            // Set the transport
             Transport = GetTransport();
+            
+            // Subscribe to events
             Transport.OnAttemptConnectionEvent += () => {
                 OnAttemptConnection();
-                onAttemptConnection.Invoke();
                 OnAttemptConnectionEvent?.Invoke();
             };
             Transport.OnConnectEvent += () => {
                 OnConnect();
-                onConnect.Invoke();
                 OnConnectEvent?.Invoke();
             };
             Transport.OnDisconnectEvent += () => {
                 OnDisconnect();
-                onDisconnect.Invoke();
                 OnDisconnectEvent?.Invoke();
             };
             Transport.OnUpdateEvent += () => {
                 OnUpdate();
-                onUpdate.Invoke();
                 OnUpdateEvent?.Invoke();
             };
-            Transport.OnLogEvent += (message) => {
+            Transport.OnLogEvent += message => {
                 OnLog(message);
-                onLog.Invoke(message);
                 OnLogEvent?.Invoke(message);
             };
         }
 
         private void OnDestroy() {
+            // Handle singleton
             if (ReferenceEquals(Singleton, this)) {
                 Singleton = null;
                 Transport.Dispose();
@@ -62,9 +78,7 @@ namespace NetworkLayer {
             }
         }
 
-        private void FixedUpdate() {
-            Transport.Update();
-        }
+        private void FixedUpdate() => Transport.Update();
 
         protected virtual void OnDestroying() { }
         

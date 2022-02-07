@@ -1,67 +1,85 @@
-using System;
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace NetworkLayer {
     public abstract class ServerManager<T> : MonoBehaviour where T : ServerManager<T> {
+        /// <summary>
+        /// The server instance.
+        /// </summary>
         public static T Singleton { get; private set; }
 
-        [SerializeField] private UnityEvent onHost;
-        [SerializeField] private UnityEvent onClose;
-        [SerializeField] private UnityEvent<ulong> onConnect;
-        [SerializeField] private UnityEvent<ulong> onDisconnect;
-        [SerializeField] private UnityEvent onUpdate;
-        [SerializeField] private UnityEvent<object> onLog;
-
+        /// <summary>
+        /// Raised when the server starts.
+        /// </summary>
         public event ServerTransport.HostDelegate OnHostEvent;
+        
+        /// <summary>
+        /// Raised when the server closes
+        /// </summary>
         public event ServerTransport.CloseDelegate OnCloseEvent;
+        
+        /// <summary>
+        /// Raised when a client connects.
+        /// </summary>
         public event ServerTransport.ConnectDelegate OnConnectEvent;
+        
+        /// <summary>
+        /// Raised when a client disconnects.
+        /// </summary>
         public event ServerTransport.DisconnectDelegate OnDisconnectEvent;
+        
+        /// <summary>
+        /// Raised when the server updates.
+        /// </summary>
         public event ServerTransport.UpdateDelegate OnUpdateEvent;
+
+        /// <summary>
+        /// Raised when the server logs.
+        /// </summary>
         public event ServerTransport.LogDelegate OnLogEvent;
         
         public ServerTransport Transport { get; private set; }
 
         private void Awake() {
+            // Handle singleton
             if (Singleton) {
                 Destroy(this);
                 return;
             }
+            DontDestroyOnLoad(this);
             Singleton = (T) this;
+            
+            // Set the transport
             Transport = GetTransport();
+            
+            // Subscribe events
             Transport.OnHostEvent += () => {
                 OnHost();
-                onHost.Invoke();
                 OnHostEvent?.Invoke();
             };
             Transport.OnCloseEvent += () => {
                 OnClose();
-                onClose.Invoke();
                 OnCloseEvent?.Invoke();
             };
             Transport.OnConnectEvent += client => {
                 OnConnect(client);
-                onConnect.Invoke(client);
                 OnConnectEvent?.Invoke(client);
             };
             Transport.OnDisconnectEvent += client => {
                 OnDisconnect(client);
-                onDisconnect.Invoke(client);
                 OnDisconnectEvent?.Invoke(client);
             };
             Transport.OnUpdateEvent += () => {
                 OnUpdate();
-                onUpdate.Invoke();
                 OnUpdateEvent?.Invoke();
             };
             Transport.OnLogEvent += message => {
                 OnLog(message);
-                onLog.Invoke(message);
                 OnLogEvent?.Invoke(message);
             };
         }
 
         private void OnDestroy() {
+            // Handle singleton
             if (ReferenceEquals(Singleton, this)) {
                 Singleton = null;
                 Transport.Dispose();
@@ -69,9 +87,7 @@ namespace NetworkLayer {
             }
         }
 
-        private void FixedUpdate() {
-            Transport.Update();
-        }
+        private void FixedUpdate() => Transport.Update();
 
         protected virtual void OnDestroying() { }
         
