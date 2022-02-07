@@ -65,9 +65,9 @@ namespace NetworkLayer.Transport.LiteNetLib {
         }
 
         public override void Update() {
-            if (State != EClientState.Disconnected) return;
+            if (!_netManager.IsRunning) return;
             _netManager.PollEvents();
-            OnUpdate();
+            if (State != EClientState.Disconnected) OnUpdate();
         }
 
         public override void Dispose() {
