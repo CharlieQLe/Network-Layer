@@ -1,4 +1,4 @@
-namespace NetworkLayer {
+namespace NetworkLayer.Development {
     public class DefaultServerTransport : ServerTransport {
         public DefaultServerTransport(uint messageGroupId) : base(messageGroupId) { }
         public DefaultServerTransport(string messageGroupName) : base(messageGroupName) { }
