@@ -5,7 +5,6 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
-using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     /// <summary>
@@ -183,17 +182,34 @@ namespace NetworkLayer.Transports.UTP {
                     // Remove connections if the popped event is a disconnect event
                     if (type == NetworkEvent.Type.Disconnect) Connections.Remove((ulong) connection.InternalId);
                     
-                    // Cache the buffer size
-                    int index = ReceiveBuffer.Length;
+                    // Check the message type
+                    byte header = reader.ReadByte();
+                    
+                    // If the header is 0, then this is a regular message.
+                    // If the header is 1, then this is a client ping.
+                    if (header == 0) {
+                        // Cache the buffer size
+                        int index = ReceiveBuffer.Length;
                         
-                    // Resize the buffer
-                    ReceiveBuffer.ResizeUninitialized(index + reader.Length);
+                        // Resize the buffer
+                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
                         
-                    // Read the data into the buffer
-                    reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
+                        // Read the data into the buffer
+                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
                         
-                    // Enqueue the event
-                    EventQueue.Enqueue(new EventData((ulong) connection.InternalId, type, index, reader.Length));
+                        // Enqueue the event
+                        EventQueue.Enqueue(new EventData((ulong) connection.InternalId, type, index + 1, reader.Length - 1));
+                    } else if (header == 1) {
+                        // Read the ping id
+                        int id = reader.ReadInt();
+                        
+                        // Send the id back
+                        if (0 == Driver.BeginSend(connection, out DataStreamWriter writer)) {
+                            writer.WriteByte(1);
+                            writer.WriteInt(id);
+                            Driver.EndSend(writer);
+                        }
+                    }
                 }
             }
         }
@@ -239,6 +255,7 @@ namespace NetworkLayer.Transports.UTP {
         private void WriteToSendBuffer(uint messageId, WriteMessageDelegate writeMessage) {
             // Reset the message and write the message id and other data
             _message.Reset();
+            _message.AsWriter.PutByte(0);
             _message.AsWriter.PutUInt(messageId);
             writeMessage(_message.AsWriter);
             

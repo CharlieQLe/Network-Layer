@@ -1,32 +1,33 @@
+using System;
 using UnityEngine;
 
 namespace NetworkLayer {
-    public abstract class ServerManager<T> : MonoBehaviour where T : ServerManager<T> {
+    public abstract class ServerManager : MonoBehaviour {
         /// <summary>
         /// The server instance.
         /// </summary>
-        public static T Singleton { get; private set; }
+        public static ServerManager Singleton { get; private set; }
 
         /// <summary>
         /// Raised when the server starts.
         /// </summary>
         public event ServerTransport.HostDelegate OnHostEvent;
-        
+
         /// <summary>
         /// Raised when the server closes
         /// </summary>
         public event ServerTransport.CloseDelegate OnCloseEvent;
-        
+
         /// <summary>
         /// Raised when a client connects.
         /// </summary>
         public event ServerTransport.ConnectDelegate OnConnectEvent;
-        
+
         /// <summary>
         /// Raised when a client disconnects.
         /// </summary>
         public event ServerTransport.DisconnectDelegate OnDisconnectEvent;
-        
+
         /// <summary>
         /// Raised when the server updates.
         /// </summary>
@@ -36,8 +37,14 @@ namespace NetworkLayer {
         /// Raised when the server logs.
         /// </summary>
         public event ServerTransport.LogDelegate OnLogEvent;
-        
+
         public ServerTransport Transport { get; private set; }
+
+#if UNITY_EDITOR
+
+        [NonSerialized, HideInInspector] public bool debugFoldout;
+
+#endif
 
         private void Awake() {
             // Handle singleton
@@ -45,12 +52,13 @@ namespace NetworkLayer {
                 Destroy(this);
                 return;
             }
+
             DontDestroyOnLoad(this);
-            Singleton = (T) this;
-            
+            Singleton = this;
+
             // Set the transport
             Transport = GetTransport();
-            
+
             // Subscribe events
             Transport.OnHostEvent += () => {
                 OnHost();
@@ -90,7 +98,7 @@ namespace NetworkLayer {
         private void FixedUpdate() => Transport.Update();
 
         protected virtual void OnDestroying() { }
-        
+
         protected abstract ServerTransport GetTransport();
 
         protected abstract void OnHost();

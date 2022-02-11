@@ -135,6 +135,11 @@ namespace NetworkLayer {
         public abstract EClientState State { get; }
         
         /// <summary>
+        /// Get the round trip time.
+        /// </summary>
+        public abstract int Rtt { get; }
+        
+        /// <summary>
         /// Connect to the server.
         /// </summary>
         /// <param name="address"></param>

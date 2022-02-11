@@ -41,6 +41,7 @@ namespace NetworkLayer.Transport.LiteNetLib {
         };
 
         public override EClientState State => _serverPeer != null ? ConvertConnectionState(_serverPeer.ConnectionState) : EClientState.Disconnected;
+        public override int Rtt => _serverPeer == null ? -1 : _serverPeer.Ping * 2;
 
         public override void Connect(string address, ushort port) {
             if (State != EClientState.Disconnected) {

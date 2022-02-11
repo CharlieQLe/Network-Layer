@@ -5,7 +5,7 @@ using NetworkLayer;
 using NetworkLayer.Transport.LiteNetLib;
 using UnityEngine;
 
-public class PingPongServer : ServerManager<PingPongServer> {
+public class PingPongServer : ServerManager {
     [ServerMessageReceiver("Ping", "PingPong")]
     private static void ReceivePing(ulong client, Message.Reader reader) {
         int ping = reader.ReadInt();

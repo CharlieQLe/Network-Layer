@@ -2,7 +2,7 @@ using NetworkLayer;
 using NetworkLayer.Transport.LiteNetLib;
 using UnityEngine;
 
-public class PingPongClient : ClientManager<PingPongClient> {
+public class PingPongClient : ClientManager {
     [ClientMessageReceiver("Pong", "PingPong")]
     private static void ReceivePong(Message.Reader reader) {
         Debug.Log($"Client - Received pong {reader.ReadInt()}!");

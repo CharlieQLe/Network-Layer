@@ -1,11 +1,12 @@
+using System;
 using UnityEngine;
 
 namespace NetworkLayer {
-    public abstract class ClientManager<T> : MonoBehaviour where T : ClientManager<T> {
+    public abstract class ClientManager : MonoBehaviour {
         /// <summary>
         /// The client instance.
         /// </summary>
-        public static T Singleton { get; private set; }
+        public static ClientManager Singleton { get; private set; }
 
         /// <summary>
         /// Raised when the client tries to connect
@@ -31,6 +32,10 @@ namespace NetworkLayer {
         /// Raised when the client logs
         /// </summary>
         public event ClientTransport.LogDelegate OnLogEvent;
+
+#if UNITY_EDITOR
+        [NonSerialized, HideInInspector] public bool debugFoldout;
+#endif
         
         public ClientTransport Transport { get; private set; }
         
@@ -41,7 +46,7 @@ namespace NetworkLayer {
                 return;
             }
             DontDestroyOnLoad(this);
-            Singleton = (T) this;
+            Singleton = this;
             
             // Set the transport
             Transport = GetTransport();

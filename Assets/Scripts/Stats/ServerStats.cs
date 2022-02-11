@@ -1,20 +1,22 @@
+using System;
 using NetworkLayer;
+using NetworkLayer.Transport.LiteNetLib;
 using NetworkLayer.Transports.UTP;
 using UnityEngine;
 
-public class RTTServer : ServerManager<RTTServer> {
-    [ServerMessageReceiver("SendTick", "RTT")]
-    private static void ReceiveTick(ulong client, Message.Reader reader) {
-        int t = reader.ReadInt();
-        Singleton.Transport.SendMessageToClient(client, "SendTick", writer => writer.PutInt(t), ESendMode.Unreliable);
-    }
+public class ServerStats : ServerManager {
+    [SerializeField] private ETransportType _transportType;
     
-    protected override ServerTransport GetTransport() => new UTPServerTransport("RTT");
-
     private void Start() {
         Transport.Host(7777);
     }
 
+    protected override ServerTransport GetTransport() => _transportType switch {
+        ETransportType.UTP => new UTPServerTransport("Stats"),
+        ETransportType.LiteNetLib => new LiteNetLibServerTransport("Stats"),
+        _ => null
+    };
+    
     protected override void OnHost() { }
 
     protected override void OnClose() { }
