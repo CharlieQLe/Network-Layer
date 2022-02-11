@@ -111,7 +111,7 @@ namespace NetworkLayer {
         public void Reset() => _position = 0;
 
         public void Resize(int newSize) {
-            if (newSize >= _data.Length) return;
+            if (newSize <= _data.Length) return;
             byte[] newData = new byte[newSize];
             Buffer.BlockCopy(_data, 0, newData, 0, _position);
             _data = newData;

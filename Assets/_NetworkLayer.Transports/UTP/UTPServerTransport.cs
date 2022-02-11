@@ -5,6 +5,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Networking.Transport;
+using UnityEngine;
 
 namespace NetworkLayer.Transports.UTP {
     /// <summary>
@@ -192,13 +193,13 @@ namespace NetworkLayer.Transports.UTP {
                         int index = ReceiveBuffer.Length;
                         
                         // Resize the buffer
-                        ReceiveBuffer.ResizeUninitialized(index + reader.Length);
+                        ReceiveBuffer.ResizeUninitialized(index + reader.Length - 1);
                         
                         // Read the data into the buffer
-                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length));
+                        reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length - 1));
                         
                         // Enqueue the event
-                        EventQueue.Enqueue(new EventData((ulong) connection.InternalId, type, index + 1, reader.Length - 1));
+                        EventQueue.Enqueue(new EventData((ulong) connection.InternalId, type, index, reader.Length - 1));
                     } else if (header == 1) {
                         // Read the ping id
                         int id = reader.ReadInt();

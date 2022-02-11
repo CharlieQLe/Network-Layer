@@ -166,7 +166,7 @@ namespace NetworkLayer {
         /// Close the server.
         /// </summary>
         public abstract void Close();
-        
+
         /// <summary>
         /// Disconnect the specified client.
         /// </summary>

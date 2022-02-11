@@ -308,7 +308,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2039566797}
-  - component: {fileID: 2039566796}
   - component: {fileID: 2039566795}
   m_Layer: 0
   m_Name: GameObject
@@ -326,21 +325,12 @@ MonoBehaviour:
   m_GameObject: {fileID: 2039566794}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c20f5ed5b4bd8f0369ba3b3dcd823c9f, type: 3}
+  m_Script: {fileID: 11500000, guid: 238c1a4920884812a86017d257bb917e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
---- !u!114 &2039566796
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2039566794}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0c3141bba0f11ec0dbeef10bfe07b9e1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  transportType: 0
+  ip: 127.0.0.1
+  port: 7777
 --- !u!4 &2039566797
 Transform:
   m_ObjectHideFlags: 0

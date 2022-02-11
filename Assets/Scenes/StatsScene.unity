@@ -153,7 +153,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 27e4c814364f4494bb0cc9ca495ee488, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _transportType: 0
+  _transportType: 1
 --- !u!114 &437833178
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -166,7 +166,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a734b792369dd44aa8ce6c2b3d48faa2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _transportType: 0
+  _transportType: 1
 --- !u!4 &437833179
 Transform:
   m_ObjectHideFlags: 0
