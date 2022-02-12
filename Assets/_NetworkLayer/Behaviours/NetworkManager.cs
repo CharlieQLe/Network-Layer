@@ -9,32 +9,32 @@ namespace NetworkLayer {
         /// Get the client transport
         /// </summary>
         public ClientTransport Client { get; private set; }
-        
+
         /// <summary>
         /// Raised when the client tries to connect
         /// </summary>
         public event ClientTransport.AttemptConnectionDelegate OnClientAttemptConnectionEvent;
-        
+
         /// <summary>
         /// Raised when the client connects
         /// </summary>
         public event ClientTransport.ConnectDelegate OnClientConnectEvent;
-        
+
         /// <summary>
         /// Raised when the client disconnects
         /// </summary>
         public event ClientTransport.DisconnectDelegate OnClientDisconnectEvent;
-        
+
         /// <summary>
         /// Raised when the client updates
         /// </summary>
         public event ClientTransport.UpdateDelegate OnClientUpdateEvent;
-        
+
         /// <summary>
         /// Get the server transport.
         /// </summary>
         public ServerTransport Server { get; private set; }
-        
+
         /// <summary>
         /// Raised when the server starts.
         /// </summary>
@@ -59,19 +59,20 @@ namespace NetworkLayer {
         /// Raised when the server updates.
         /// </summary>
         public event ServerTransport.UpdateDelegate OnServerUpdateEvent;
-        
-        #if UNITY_EDITOR
+
+#if UNITY_EDITOR
 
         [NonSerialized] public bool debugClientFoldout;
         [NonSerialized] public bool debugServerFoldout;
-        
-        #endif
-        
+
+#endif
+
         private void Awake() {
             if (Singleton) {
                 Destroy(this);
                 return;
             }
+
             Singleton = this;
             DontDestroyOnLoad(this);
             Client = InitializeClient();
@@ -92,7 +93,7 @@ namespace NetworkLayer {
                 OnClientUpdateEvent?.Invoke();
             };
             Client.OnLogEvent += OnLog;
-            
+
             Server = InitializeServer();
             Server.OnHostEvent += () => {
                 OnServerHost();
@@ -135,13 +136,13 @@ namespace NetworkLayer {
         /// Invoked if this object is the singleton
         /// </summary>
         protected virtual void OnSingletonDestroy() { }
-        
+
         /// <summary>
         /// Initialize the client transport.
         /// </summary>
         /// <returns></returns>
         protected abstract ClientTransport InitializeClient();
-        
+
         /// <summary>
         /// Initialize the server transport.
         /// </summary>

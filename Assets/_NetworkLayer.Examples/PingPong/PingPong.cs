@@ -1,7 +1,7 @@
 using UnityEngine;
 
 namespace NetworkLayer.Examples.PingPong {
-    public class PingPong : NetworkManager {
+    public class PingPong : ExampleNetworkManager {
         [ServerMessageReceiver("Ping", "PingPong")]
         private static void ReceivePing(ulong client, Message.Reader reader) {
             int ping = reader.ReadInt();
@@ -12,10 +12,6 @@ namespace NetworkLayer.Examples.PingPong {
         [ClientMessageReceiver("Pong", "PingPong")]
         private static void ReceivePong(Message.Reader reader) => Debug.Log($"Client - Received pong {reader.ReadInt()}!");
         
-        [SerializeField] private ETransportType transportType;
-        [SerializeField] private string ip = "127.0.0.1";
-        [SerializeField] private ushort port = 7777;
-
         private void SendPing() {
             int send = Random.Range(0, 32);
             Debug.Log($"Client - Sending ping {send} to server!");
@@ -23,15 +19,11 @@ namespace NetworkLayer.Examples.PingPong {
         }
         
         private void Start() {
-            Server.Host(port);
-            Client.Connect(ip, port);
+            Server.Host(Port);
+            Client.Connect(Ip, Port);
         }
 
-        protected override ClientTransport InitializeClient() => ExampleUtility.GetClientTransport(transportType, "PingPong");
-
-        protected override ServerTransport InitializeServer() => ExampleUtility.GetServerTransport(transportType, "PingPong");
-
-        protected override void OnLog(object message) => Debug.Log(message);
+        protected override string GetMessageGroupName() => "PingPong";
 
         protected override void OnClientAttemptConnection() { }
 
