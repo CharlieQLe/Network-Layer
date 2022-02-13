@@ -29,29 +29,29 @@ namespace NetworkLayer {
             /// <summary>
             /// Invoke when server hosts.
             /// </summary>
-            protected void OnHost() => HostEvent?.Invoke();
+            protected static void OnHost() => HostEvent?.Invoke();
             
             /// <summary>
             /// Invoke when server closes.
             /// </summary>
-            protected void OnClose() => CloseEvent?.Invoke();
+            protected static void OnClose() => CloseEvent?.Invoke();
             
             /// <summary>
             /// Invoke when a client connects.
             /// </summary>
             /// <param name="clientId"></param>
-            protected void OnConnect(ulong clientId) => ConnectEvent?.Invoke(clientId);
+            protected static void OnConnect(ulong clientId) => ConnectEvent?.Invoke(clientId);
             
             /// <summary>
             /// Invoke when a client disconnects.
             /// </summary>
             /// <param name="clientId"></param>
-            protected void OnDisconnect(ulong clientId) => DisconnectEvent?.Invoke(clientId);
+            protected static void OnDisconnect(ulong clientId) => DisconnectEvent?.Invoke(clientId);
             
             /// <summary>
             /// Invoke when updating the client.
             /// </summary>
-            protected void OnUpdate() => UpdateEvent?.Invoke();
+            protected static void OnUpdate() => UpdateEvent?.Invoke();
 
             /// <summary>
             /// Invoke when a message is received.

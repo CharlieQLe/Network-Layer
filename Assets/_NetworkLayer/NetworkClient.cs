@@ -25,22 +25,22 @@ namespace NetworkLayer {
             /// <summary>
             /// Invoke when starting to connect.
             /// </summary>
-            protected void OnStartConnecting() => StartConnectingEvent?.Invoke();
+            protected static void OnStartConnecting() => StartConnectingEvent?.Invoke();
             
             /// <summary>
             /// Invoke when successfully connected to the server.
             /// </summary>
-            protected void OnConnect() => ConnectEvent?.Invoke();
+            protected static void OnConnect() => ConnectEvent?.Invoke();
             
             /// <summary>
             /// Invoke when disconnect from the server or failed to connect.
             /// </summary>
-            protected void OnDisconnect() => DisconnectEvent?.Invoke();
+            protected static void OnDisconnect() => DisconnectEvent?.Invoke();
             
             /// <summary>
             /// Invoke when updating the client.
             /// </summary>
-            protected void OnUpdate() => UpdateEvent?.Invoke();
+            protected static void OnUpdate() => UpdateEvent?.Invoke();
 
             /// <summary>
             /// Invoke when a message is received.
