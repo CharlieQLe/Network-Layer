@@ -4,18 +4,17 @@ using NetworkLayer.Utils;
 namespace NetworkLayer {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
     public class ServerMessageReceiverAttribute : Attribute {
-        public readonly uint MessageId;
-        public readonly uint MessageGroupId;
+        public readonly string MessageName;
+        public readonly string MessageGroup;
 
-        public ServerMessageReceiverAttribute(uint messageId, uint messageGroupId) {
-            MessageId = messageId;
-            MessageGroupId = messageGroupId;
+        private uint _messageId;
+        private bool _hashed;
+
+        public uint MessageId => _hashed ? _messageId : _messageId = Hash32.Generate(MessageName);
+
+        public ServerMessageReceiverAttribute(string messageName, string messageGroup) {
+            MessageName = messageName;
+            MessageGroup = messageGroup;
         }
-        
-        public ServerMessageReceiverAttribute(string messageName, uint messageGroupId) : this(Hash32.Generate(messageName), messageGroupId) { }
-        
-        public ServerMessageReceiverAttribute(uint messageId, string messageGroupName) : this(messageId, Hash32.Generate(messageGroupName)) { }
-        
-        public ServerMessageReceiverAttribute(string messageName, string messageGroupName) : this(Hash32.Generate(messageName), Hash32.Generate(messageGroupName)) { }
     }
 }

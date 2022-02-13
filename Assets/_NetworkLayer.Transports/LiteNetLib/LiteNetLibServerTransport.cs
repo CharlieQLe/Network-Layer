@@ -7,7 +7,7 @@ using LiteNetLib.Utils;
 using NetworkLayer.Utils;
 
 namespace NetworkLayer.Transport.LiteNetLib {
-    public class LiteNetLibServerTransport : ServerTransport, INetEventListener {
+    public class LiteNetLibServerTransport : NetworkServer.BaseTransport, INetEventListener {
         public delegate void HandleConnectionAcceptDelegate(ConnectionRequest request);
         public delegate void WriteDisconnectDataDelegate(Message.Writer writer);
 
@@ -15,6 +15,7 @@ namespace NetworkLayer.Transport.LiteNetLib {
         private readonly NetManager _netManager;
         private readonly NetDataWriter _dataWriter;
         private readonly Dictionary<ulong, NetPeer> _peers;
+        private readonly List<ulong> _clientIds;
         private HandleConnectionAcceptDelegate _handleConnectionAccept;
         private WriteDisconnectDataDelegate _writeDisconnectData;
 
@@ -22,83 +23,63 @@ namespace NetworkLayer.Transport.LiteNetLib {
         public event EventBasedNetListener.OnNetworkReceiveUnconnected NetworkReceiveUnconnectedEvent;
         public event EventBasedNetListener.OnNetworkLatencyUpdate NetworkLatencyUpdateEvent;
 
-        public LiteNetLibServerTransport(uint messageGroupId) : base(messageGroupId) {
+        public LiteNetLibServerTransport() {
             _message = new Message();
             _netManager = new NetManager(this);
             _dataWriter = new NetDataWriter();
             _peers = new Dictionary<ulong, NetPeer>();
+            _clientIds = new List<ulong>();
             _handleConnectionAccept = request => request.Accept();
         }
 
-        public LiteNetLibServerTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
-
         public override bool IsRunning => _netManager.IsRunning;
+        public override int ClientCount => _clientIds.Count;
 
         public override void Host(ushort port) {
-            if (IsRunning) {
-                OnLog("Server - Cannot host. Reason: already hosting!");
-                return;
-            }
+            if (IsRunning) return;
             _netManager.Start(port);
             OnHost();
         }
 
         public override void Close() {
-            if (!IsRunning) {
-                OnLog("Server - Cannot close server. Reason: server already closed!");
-                return;
-            }
+            if (!IsRunning) return;
             _message.Reset();
             _writeDisconnectData?.Invoke(_message.AsWriter);
             _netManager.DisconnectAll(_message.Data, 0, _message.Length);
             _netManager.Stop();
             _peers.Clear();
+            _clientIds.Clear();
             OnClose();
         }
 
         public override void Disconnect(ulong client) {
-            if (!IsRunning) {
-                OnLog($"Server - Cannot disconnect client {client}. Reason: server is closed!");
-                return;
-            }
-            if (!_peers.TryGetValue(client, out NetPeer peer)) {
-                OnLog($"Server - Cannot disconnect client {client}. Reason: client not found!");
-                return;
-            }
+            if (!IsRunning || !_peers.TryGetValue(client, out NetPeer peer)) return;
             _netManager.DisconnectPeer(peer);
         }
 
-        public override void Update() {
+        protected override void Update() {
             if (!IsRunning) return;
             _netManager.PollEvents();
             OnUpdate();
         }
 
-        public override void Dispose() {
-            Close();
-        }
+        public override void Dispose() => Close();
 
-        public override void SendMessageToAll(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to all clients. Reason: server not running!");
-                return;
-            }
+        public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
+            if (!IsRunning) return;
             _message.Reset();
-            _message.AsWriter.PutUInt(messageId);
-            writeMessage(_message.AsWriter);
+            _message.AsWriter.PutUInt(Hash32.Generate(messageName));
+            writeToMessage(_message.AsWriter);
             _dataWriter.Reset();
             _dataWriter.PutBytesWithLength(_message.Data, 0, _message.Length);
             _netManager.SendToAll(_dataWriter, sendMode == ESendMode.Reliable ? DeliveryMethod.ReliableSequenced : DeliveryMethod.Unreliable);
         }
 
-        public override void SendMessageToFilter(FilterClientDelegate filter, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to filtered clients. Reason: server not running!");
-                return;
-            }
+        public override void Send(NetworkServer.SendFilterDelegate filter, string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
+            if (!IsRunning) return;
             _message.Reset();
-            _message.AsWriter.PutUInt(messageId);
-            writeMessage(_message.AsWriter);
+            _message.AsWriter.PutUInt(Hash32.Generate(messageName));
+            writeToMessage(_message.AsWriter);
             _dataWriter.Reset();
             _dataWriter.PutBytesWithLength(_message.Data, 0, _message.Length);
             DeliveryMethod deliveryMethod = sendMode == ESendMode.Reliable ? DeliveryMethod.ReliableSequenced : DeliveryMethod.Unreliable;
@@ -107,32 +88,30 @@ namespace NetworkLayer.Transport.LiteNetLib {
                     item.Value.Send(_dataWriter, deliveryMethod);
         }
 
-        public override void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to client. Reason: server not running!");
-                return;
-            }
-            if (!_peers.TryGetValue(client, out NetPeer peer)) {
-                OnLog($"Server - Cannot send message {messageId} to client. Reason: client {client} not found!");
-                return;
-            }
+        public override void Send(ulong client, string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
+            if (!IsRunning || !_peers.TryGetValue(client, out NetPeer peer)) return;
             _message.Reset();
-            _message.AsWriter.PutUInt(messageId);
-            writeMessage(_message.AsWriter);
+            _message.AsWriter.PutUInt(Hash32.Generate(messageName));
+            writeToMessage(_message.AsWriter);
             _dataWriter.Reset();
             _dataWriter.PutBytesWithLength(_message.Data, 0, _message.Length);
             peer.Send(_dataWriter, sendMode == ESendMode.Reliable ? DeliveryMethod.ReliableSequenced : DeliveryMethod.Unreliable);
         }
 
+        public override void PopulateClientIds(List<ulong> clientIds) {
+            clientIds.Clear();
+            for (int i = 0; i < _clientIds.Count; i++) clientIds.Add(_clientIds[i]);
+        }
+
         void INetEventListener.OnPeerConnected(NetPeer peer) {
             _peers[(ulong) peer.Id] = peer;
-            OnLog($"Server - Client {(ulong) peer.Id} connected!");
+            _clientIds.Add((ulong) peer.Id);
             OnConnect((ulong) peer.Id);
         }
 
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo) {
             _peers.Remove((ulong) peer.Id);
-            OnLog($"Server - Client {(ulong) peer.Id} disconnected!");
+            _clientIds.Remove((ulong) peer.Id);
             OnDisconnect((ulong) peer.Id);
         }
 
@@ -143,11 +122,7 @@ namespace NetworkLayer.Transport.LiteNetLib {
             _message.Resize(reader.UserDataSize);
             int count = reader.GetInt();
             reader.GetBytes(_message.Data, 0, count);
-            try {
-                OnReceiveMessage((ulong) peer.Id, _message.AsReader);
-            } catch (Exception exception) {
-                OnLog($"Server - Error trying to receive data from client {(ulong) peer.Id}! Message: {exception}");
-            }
+            OnReceiveMessage((ulong) peer.Id, _message.AsReader);
         }
 
         void INetEventListener.OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType) => NetworkReceiveUnconnectedEvent?.Invoke(remoteEndPoint, reader, messageType);

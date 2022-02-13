@@ -11,7 +11,7 @@ namespace NetworkLayer.Transports.UTP {
     /// <summary>
     /// The server transport for the Unity Transport Package
     /// </summary>
-    public class UTPServerTransport : ServerTransport {
+    public class UTPServerTransport : NetworkServer.BaseTransport {
         /// <summary>
         /// The send data
         /// </summary>
@@ -51,7 +51,7 @@ namespace NetworkLayer.Transports.UTP {
             /// <summary>
             /// The id of the client that sent the event
             /// </summary>
-            public readonly ulong Client;
+            public readonly ulong ClientId;
             
             /// <summary>
             /// The event type
@@ -69,7 +69,7 @@ namespace NetworkLayer.Transports.UTP {
             public readonly int Length;
 
             public EventData(ulong client, NetworkEvent.Type type, int index, int length) {
-                Client = client;
+                ClientId = client;
                 Type = type;
                 Index = index;
                 Length = length;
@@ -232,7 +232,9 @@ namespace NetworkLayer.Transports.UTP {
         private readonly Queue<PendingDisconnectDelegate> _pendingDisconnectQueue;
         private readonly Queue<SendDelegate> _sendQueue;
 
-        public UTPServerTransport(uint messageGroupId) : base(messageGroupId) {
+        private int _connectionCount;
+
+        public UTPServerTransport() {
             _connections = new NativeHashMap<ulong, NetworkConnection>(1, Allocator.Persistent);
             _sendBuffer = new NativeList<byte>(1024, Allocator.Persistent);
             _receiveBuffer = new NativeList<byte>(1024, Allocator.Persistent);
@@ -244,34 +246,35 @@ namespace NetworkLayer.Transports.UTP {
             _sendQueue = new Queue<SendDelegate>();
         }
 
-        public UTPServerTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
-
         public override bool IsRunning => _driver.IsCreated;
+        
+        public override int ClientCount => _connectionCount;
 
         /// <summary>
         /// Write data to the send buffer
         /// </summary>
-        /// <param name="messageId"></param>
-        /// <param name="writeMessage"></param>
-        private void WriteToSendBuffer(uint messageId, WriteMessageDelegate writeMessage) {
+        /// <param name="messageName"></param>
+        /// <param name="writeToMessage"></param>
+        /// <returns></returns>
+        private int WriteToSendBuffer(string messageName, WriteToMessageDelegate writeToMessage) {
             // Reset the message and write the message id and other data
             _message.Reset();
             _message.AsWriter.PutByte(0);
-            _message.AsWriter.PutUInt(messageId);
-            writeMessage(_message.AsWriter);
+            _message.AsWriter.PutUInt(Hash32.Generate(messageName));
+            writeToMessage(_message.AsWriter);
             
             // Resize the send buffer and copy the message data into the buffer
             int index = _sendBuffer.Length;
             _sendBuffer.Resize(index + _message.Length, NativeArrayOptions.UninitializedMemory);
             NativeArray<byte>.Copy(_message.Data, 0, _sendBuffer.AsArray(), index, _message.Length);
+            
+            // Return the start index
+            return index;
         }
-
+        
         public override void Host(ushort port) {
             // Do nothing if the server is running
-            if (IsRunning) {
-                OnLog("Server - Cannot host. Reason: already hosting!");
-                return;
-            }
+            if (IsRunning) return;
             
             // Create the endpoint
             NetworkEndPoint endpoint = NetworkEndPoint.AnyIpv4;
@@ -284,21 +287,16 @@ namespace NetworkLayer.Transports.UTP {
                 _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
                 
                 // Raise the host event
-                OnLog("Server - Hosting server!");
                 OnHost();
             } else {
                 // Dispose the driver if hosting fails
                 _driver.Dispose();
-                OnLog("Server - Cannot host. Reason: server failed to bind or listen!");
             }
         }
 
         public override void Close() {
             // Do nothing if the server isn't running
-            if (!IsRunning) {
-                OnLog("Server - Cannot close server. Reason: server already closed!");
-                return;
-            }
+            if (!IsRunning) return;
             
             // Complete the job
             _job.Complete();
@@ -324,50 +322,42 @@ namespace NetworkLayer.Transports.UTP {
             _reliablePipeline = default;
             
             // Raise the close event
-            OnLog("Server - Closed server!");
             OnClose();
         }
 
-        public override void Disconnect(ulong client) {
+        public override void Disconnect(ulong clientId) {
             // Do nothing if the server isn't running
-            if (!IsRunning) {
-                OnLog($"Server - Cannot disconnect client {client}. Reason: server is closed!");
-                return;
-            }
+            if (!IsRunning) return;
             
             // Enqueue the disconnect
             _pendingDisconnectQueue.Enqueue(() => {
                 // Do nothing if the connection does not exist
-                if (!_connections.TryGetValue(client, out NetworkConnection connection)) {
-                    OnLog($"Server - Cannot disconnect client {client}. Reason: client not found!");
-                    return;
-                }
+                if (!_connections.TryGetValue(clientId, out NetworkConnection connection)) return;
                 
                 // Disconnect the connection
                 _driver.Disconnect(connection);
                 
                 // Remove the connection
-                _connections.Remove(client);
-                
+                _connections.Remove(clientId);
+
                 // Raise the disconnect event
-                OnLog($"Server - Disconnected client {client}!");
-                OnDisconnect(client);
+                OnDisconnect(clientId);
             });
         }
 
-        public override void Update() {
+        protected override void Update() {
             // Complete the job
             _job.Complete();
 
             // Do nothing if the server is not running
             if (!IsRunning) return;
 
+            // Update the connection count
+            _connectionCount = _connections.Count();
+            
             // Raise the connect event for all accepted connections
-            while (_acceptedConnections.TryDequeue(out ulong client)) {
-                OnLog($"Server - Client {client} connected!");
-                OnConnect(client);
-            }
-
+            while (_acceptedConnections.TryDequeue(out ulong client)) OnConnect(client);
+            
             // Process all events
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {
                 // If the event is a data event, process the data.
@@ -380,16 +370,11 @@ namespace NetworkLayer.Transports.UTP {
                     // Copy the receive buffer data into the message
                     NativeArray<byte>.Copy(_receiveBuffer, networkEvent.Index, _message.Data, 0, networkEvent.Length);
                     
-                    // Try to receive the message. If it fails, log the error
-                    try {
-                        OnReceiveMessage(networkEvent.Client, _message.AsReader);
-                    } catch (Exception exception) {
-                        OnLog($"Server - Error trying to receive data from client {networkEvent.Client}! Message: {exception}");
-                    }
+                    // Receive the message
+                    OnReceiveMessage(networkEvent.ClientId, _message.AsReader);
                 } else {
                     // Raise the disconnect event
-                    OnLog($"Server - Client {networkEvent.Client} disconnected!");
-                    OnDisconnect(networkEvent.Client);
+                    OnDisconnect(networkEvent.ClientId);
                 }
             }
             
@@ -444,20 +429,14 @@ namespace NetworkLayer.Transports.UTP {
             _acceptedConnections.Dispose();
         }
 
-        public override void SendMessageToAll(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+        public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
             // Do nothing if the server is not running
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to all clients. Reason: server not running!");
-                return;
-            }
+            if (!IsRunning) return;
             
             // Enqueue the send
             _sendQueue.Enqueue(() => {
-                // Cache the length of the send buffer
-                int index = _sendBuffer.Length;
-                
                 // Write the message to the send buffer
-                WriteToSendBuffer(messageId, writeMessage);
+                int index = WriteToSendBuffer(messageName, writeToMessage);
                 
                 // Enqueue the send for every client
                 using NativeArray<ulong> clients = _connections.GetKeyArray(Allocator.Temp);
@@ -465,21 +444,15 @@ namespace NetworkLayer.Transports.UTP {
             });
         }
 
-        public override void SendMessageToFilter(FilterClientDelegate filter, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+        public override void Send(NetworkServer.SendFilterDelegate filter, string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
             // Do nothing if the server is not running
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to clients. Reason: server not running!");
-                return;
-            }
+            if (!IsRunning) return;
             
             // Enqueue the send
             _sendQueue.Enqueue(() => {
-                // Cache the length of the send buffer
-                int index = _sendBuffer.Length;
-                
                 // Write the message to the send buffer
-                WriteToSendBuffer(messageId, writeMessage);
-                
+                int index = WriteToSendBuffer(messageName, writeToMessage);
+
                 // Enqueue the send for every filtered client
                 using NativeArray<ulong> clients = _connections.GetKeyArray(Allocator.Temp);
                 for (int i = 0; i < clients.Length; i++)
@@ -488,30 +461,27 @@ namespace NetworkLayer.Transports.UTP {
             });
         }
 
-        public override void SendMessageToClient(ulong client, uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+        public override void Send(ulong clientId, string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
             // Do nothing if the server is not running
-            if (!IsRunning) {
-                OnLog($"Server - Cannot send message {messageId} to client {client}. Reason: server not running!");
-                return;
-            }
+            if (!IsRunning) return;
             
             // Enqueue the send
             _sendQueue.Enqueue(() => {
                 // Do nothing if the client isn't connected
-                if (!_connections.ContainsKey(client)) {
-                    OnLog($"Server - Cannot send message {messageId} to client {client}. Reason: client not found!");
-                    return;
-                }
-                
-                // Cache the length of the send buffer
-                int index = _sendBuffer.Length;
+                if (!_connections.ContainsKey(clientId)) return;
                 
                 // Write the message to the send buffer
-                WriteToSendBuffer(messageId, writeMessage);
-                
+                int index = WriteToSendBuffer(messageName, writeToMessage);
+
                 // Enqueue the send
-                _sendData.Add(new SendData(client, index, _message.Length, sendMode));
+                _sendData.Add(new SendData(clientId, index, _message.Length, sendMode));
             });
+        }
+
+        public override void PopulateClientIds(List<ulong> clientIds) {
+            clientIds.Clear();
+            using NativeArray<NetworkConnection> connections = _connections.GetValueArray(Allocator.Temp);
+            for (int i = 0; i < connections.Length; i++) clientIds.Add((ulong) connections[i].InternalId);
         }
     }
 }

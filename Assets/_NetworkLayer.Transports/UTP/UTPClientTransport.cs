@@ -12,7 +12,7 @@ namespace NetworkLayer.Transports.UTP {
     /// <summary>
     /// The client transport for the Unity Transport Package
     /// </summary>
-    public class UTPClientTransport : ClientTransport {
+    public class UTPClientTransport : NetworkClient.BaseTransport {
         /// <summary>
         /// The send data
         /// </summary>
@@ -192,8 +192,7 @@ namespace NetworkLayer.Transports.UTP {
 
                             // Enqueue the event data
                             EventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
-                        }
-                        else if (header == 1) {
+                        } else if (header == 1) {
                             int id = reader.ReadInt();
                             float t = SendTimes[id];
                             Rtt[0] = (CurrentTime - t) * 1000;
@@ -224,8 +223,8 @@ namespace NetworkLayer.Transports.UTP {
         private float _lastPingTime;
 
         private float _storedRtt;
-        
-        public UTPClientTransport(uint messageGroupId) : base(messageGroupId) {
+
+        public UTPClientTransport() {
             _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
             _driver = NetworkDriver.Create();
             _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
@@ -241,8 +240,6 @@ namespace NetworkLayer.Transports.UTP {
             _rtt[0] = -1;
         }
 
-        public UTPClientTransport(string messageGroupName) : this(Hash32.Generate(messageGroupName)) { }
-
         /// <summary>
         /// Convert the network connection state to the client state.
         /// </summary>
@@ -254,54 +251,10 @@ namespace NetworkLayer.Transports.UTP {
             _ => EClientState.Disconnected
         };
 
-        public override EClientState State => _state;
-        public override int Rtt => _state == EClientState.Connected ? Mathf.RoundToInt(_storedRtt) : -1;
-
-        public override void Connect(string address, ushort port) {
-            // Do nothing if not disconnected
-            if (State != EClientState.Disconnected) {
-                OnLog("Client - Cannot attempt connection. Reason: already connecting/connected!");
-                return;
-            }
-
-            // Try to parse the endpoint. If it fails, do nothing
-            NetworkEndPoint endpoint;
-            if (address == "localhost" || address == "127.0.0.1") {
-                endpoint = NetworkEndPoint.LoopbackIpv4;
-                endpoint.Port = port;
-            }
-            else if (!NetworkEndPoint.TryParse(address, port, out endpoint)) {
-                OnLog("Client - Cannot attempt connection. Reason: endpoint could not be resolved!");
-                return;
-            }
-
-            // Try to connect
-            _connection[0] = _driver.Connect(endpoint);
-
-            // Set the connection state
-            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
-
-            // Raise the attempt connection event
-            OnLog("Client - Attempting to connect to the server...");
-            OnAttemptConnection();
-        }
-
-        public override void Disconnect() {
-            // Do nothing if already disconnected
-            if (State == EClientState.Disconnected) {
-                OnLog("Client - Cannot disconnect. Reason: already disconnected!");
-                return;
-            }
-
-            // Complete the job
-            _job.Complete();
-
-            // Disconnect the connection
-            _driver.Disconnect(_connection[0]);
-
-            // Send all pending events 
-            _driver.ScheduleFlushSend(default).Complete();
-
+        /// <summary>
+        /// Handle disconnecting.
+        /// </summary>
+        private void HandleDisconnect() {
             // Set the connection to default
             _connection[0] = default;
             _state = EClientState.Disconnected;
@@ -313,11 +266,51 @@ namespace NetworkLayer.Transports.UTP {
             _rtt[0] = -1;
 
             // Raise disconnect event
-            OnLog("Client - Disconnected from the server!");
             OnDisconnect();
         }
+        
+        public override EClientState State => _state;
+        public override int Rtt => _state == EClientState.Connected ? Mathf.RoundToInt(_storedRtt) : -1;
 
-        public override void Update() {
+        public override void Connect(string address, ushort port) {
+            // Do nothing if not disconnected
+            if (State != EClientState.Disconnected) return;
+
+            // Try to parse the endpoint. If it fails, do nothing
+            NetworkEndPoint endpoint;
+            if (address == "localhost" || address == "127.0.0.1") {
+                endpoint = NetworkEndPoint.LoopbackIpv4;
+                endpoint.Port = port;
+            } else if (!NetworkEndPoint.TryParse(address, port, out endpoint)) return;
+
+            // Try to connect
+            _connection[0] = _driver.Connect(endpoint);
+
+            // Set the connection state
+            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
+
+            // Raise the start connecting event
+            OnStartConnecting();
+        }
+
+        public override void Disconnect() {
+            // Do nothing if already disconnected
+            if (State == EClientState.Disconnected) return;
+
+            // Complete the job
+            _job.Complete();
+
+            // Disconnect the connection
+            _driver.Disconnect(_connection[0]);
+
+            // Send all pending events 
+            _driver.ScheduleFlushSend(default).Complete();
+
+            // Handle disconnecting
+            HandleDisconnect();
+        }
+
+        protected override void Update() {
             // Complete the job
             _job.Complete();
 
@@ -332,7 +325,6 @@ namespace NetworkLayer.Transports.UTP {
                 switch (networkEvent.Type) {
                     case NetworkEvent.Type.Connect: {
                         // Raise the connect event
-                        OnLog("Client - Connected to the server!");
                         OnConnect();
                         break;
                     }
@@ -344,24 +336,14 @@ namespace NetworkLayer.Transports.UTP {
                         // Copy the buffer into the message
                         NativeArray<byte>.Copy(_receiveBuffer, networkEvent.Index, _message.Data, 0, networkEvent.Length);
 
-                        // Try to receive the message
-                        try {
-                            OnReceiveMessage(_message.AsReader);
-                        }
-                        catch (Exception exception) {
-                            OnLog($"Client - Error trying to receive data! Message: {exception}");
-                        }
-
+                        // Receive the message
+                        OnReceiveMessage(_message.AsReader);
                         break;
                     }
                     case NetworkEvent.Type.Disconnect: {
-                        // Handle the disconnect event
-                        _state = EClientState.Disconnected;
-
-                        // Raise the disconnect event
-                        OnLog("Client - Disconnected from the server!");
-                        OnDisconnect();
-                        break;
+                        // Handle disconnecting.
+                        HandleDisconnect();
+                        return;
                     }
                 }
             }
@@ -433,25 +415,16 @@ namespace NetworkLayer.Transports.UTP {
             _rtt.Dispose();
         }
 
-        public override void SendMessage(uint messageId, WriteMessageDelegate writeMessage, ESendMode sendMode) {
+        public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
             // Do nothing if not connected
-            if (State != EClientState.Connected) {
-                OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
-                return;
-            }
+            if (State != EClientState.Connected) return;
 
             _sendQueue.Enqueue(() => {
-                // Do nothing if not connected
-                if (State != EClientState.Connected) {
-                    OnLog($"Client - Cannot send message {messageId} to the server. Reason: not connected!");
-                    return;
-                }
-
                 // Write the data into the message
                 _message.Reset();
                 _message.AsWriter.PutByte(0);
-                _message.AsWriter.PutUInt(messageId);
-                writeMessage(_message.AsWriter);
+                _message.AsWriter.PutUInt(Hash32.Generate(messageName));
+                writeToMessage(_message.AsWriter);
 
                 // Copy the message data into the send buffer
                 int index = _sendBuffer.Length;
