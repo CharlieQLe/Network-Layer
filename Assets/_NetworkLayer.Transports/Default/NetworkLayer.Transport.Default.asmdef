@@ -1,0 +1,16 @@
+{
+    "name": "NetworkLayer.Transports.Default",
+    "rootNamespace": "NetworkLayer.Transports.Default",
+    "references": [
+        "GUID:e921494703fee8a6c88132c214f24dd3"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
