@@ -223,6 +223,7 @@ namespace NetworkLayer.Transports.UTP {
         private float _lastPingTime;
 
         private float _storedRtt;
+        private bool _disposed;
 
         public UTPClientTransport() {
             _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
@@ -313,13 +314,13 @@ namespace NetworkLayer.Transports.UTP {
         protected override void Update() {
             // Complete the job
             _job.Complete();
+            
+            // Do nothing if the connection is not available
+            if (_disposed || !_connection[0].IsCreated) return;
 
             // Update the connection state
             _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
-
-            // Do nothing if the connection is not available
-            if (!_connection[0].IsCreated) return;
-
+            
             // Dequeue all events
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {
                 switch (networkEvent.Type) {
@@ -356,21 +357,26 @@ namespace NetworkLayer.Transports.UTP {
             // Process the send data
             while (_sendQueue.Count > 0) _sendQueue.Dequeue()();
 
-            // RTT
+            // Set the rtt
             _storedRtt = _rtt[0];
+            
+            // Get the current time
             float currentTime = Time.realtimeSinceStartup;
+            
+            // Initialize the job
             SendPingJob sendPingJob = default;
-            bool sendPing = false;
-            if (_lastPingTime == 0 || currentTime >= _lastPingTime + 1) {
+            
+            // Check if rtt can be retrieved
+            bool sendPing = _lastPingTime == 0 || currentTime >= _lastPingTime + 1;
+            if (sendPing) {
                 _lastPingTime = currentTime;
                 _sendTimes[_pingId] = currentTime;
+                _pingId = (_pingId + 1) % 1024;
                 sendPingJob = new SendPingJob {
                     Driver = _driver,
                     Connection = _connection,
                     PingId = _pingId
                 };
-                _pingId = (_pingId + 1) % 1024;
-                sendPing = true;
             }
 
             // Create jobs

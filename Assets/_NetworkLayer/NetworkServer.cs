@@ -135,7 +135,7 @@ namespace NetworkLayer {
         }
 
         private static BaseTransport _transport;
-        private static Dictionary<uint, ReceiveMessageDelegate> _receiveMessageCallbacks;
+        private static Dictionary<uint, ReceiveMessageDelegate> _receiveMessageCallbacks = new Dictionary<uint, ReceiveMessageDelegate>();
 
         public static event HostDelegate HostEvent;
         public static event CloseDelegate CloseEvent;
@@ -195,7 +195,13 @@ namespace NetworkLayer {
         /// <summary>
         /// Handles all quitting actions.
         /// </summary>
-        private static void Quitting() => _transport?.Dispose(); // Dispose the transport
+        private static void Quitting() {
+            // Dispose the transport
+            _transport?.Dispose();
+            
+            // Reset the player loop
+            PlayerLoop.SetPlayerLoop(PlayerLoop.GetDefaultPlayerLoop());
+        }
 
         /// <summary>
         /// Do all initial setup.
