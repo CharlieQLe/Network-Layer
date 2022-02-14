@@ -52,16 +52,6 @@ public class PingPong : MonoBehaviour {
     private void Start() {
         NetworkClient.Initialize(SharedUtility.GetClientTransport(transportType), "PingPong");
         NetworkServer.Initialize(SharedUtility.GetServerTransport(transportType), "PingPong");
-
-        NetworkClient.StartConnectingEvent += () => Debug.Log($"NetworkClient - Attempting connection to server...");
-        NetworkClient.ConnectEvent += () => Debug.Log($"NetworkClient - Connected to server!");
-        NetworkClient.DisconnectEvent += () => Debug.Log($"NetworkClient - Disconnected from server!");
-
-        NetworkServer.HostEvent += () => Debug.Log($"NetworkServer - Started server!");
-        NetworkServer.CloseEvent += () => Debug.Log($"NetworkServer - Closed server!");
-        NetworkServer.ConnectEvent += clientId => Debug.Log($"NetworkServer - Client {clientId} connected!");
-        NetworkServer.DisconnectEvent += clientId => Debug.Log($"NetworkServer - Client {clientId} disconnected!");
-        
         NetworkClient.Transport.Connect(ipAddress, port);
         NetworkServer.Transport.Host(port);
     }

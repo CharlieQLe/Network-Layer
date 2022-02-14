@@ -29,24 +29,36 @@ namespace NetworkLayer {
             /// <summary>
             /// Invoke when server hosts.
             /// </summary>
-            protected static void OnHost() => HostEvent?.Invoke();
+            protected static void OnHost() {
+                Debug.Log("Server - Started server!");
+                HostEvent?.Invoke();
+            }
             
             /// <summary>
             /// Invoke when server closes.
             /// </summary>
-            protected static void OnClose() => CloseEvent?.Invoke();
+            protected static void OnClose() {
+                Debug.Log($"Server - Closed server!");
+                CloseEvent?.Invoke();
+            }
             
             /// <summary>
             /// Invoke when a client connects.
             /// </summary>
             /// <param name="clientId"></param>
-            protected static void OnConnect(ulong clientId) => ConnectEvent?.Invoke(clientId);
+            protected static void OnConnect(ulong clientId) {
+                Debug.Log($"Server - Client { clientId } connected!");
+                ConnectEvent?.Invoke(clientId);
+            }
             
             /// <summary>
             /// Invoke when a client disconnects.
             /// </summary>
             /// <param name="clientId"></param>
-            protected static void OnDisconnect(ulong clientId) => DisconnectEvent?.Invoke(clientId);
+            protected static void OnDisconnect(ulong clientId) {
+                Debug.Log($"Server - Client { clientId } disconnected!");
+                DisconnectEvent?.Invoke(clientId);
+            }
             
             /// <summary>
             /// Invoke when updating the client.
@@ -58,10 +70,10 @@ namespace NetworkLayer {
             /// </summary>
             /// <param name="clientId"></param>
             /// <param name="reader"></param>
-            protected void OnReceiveMessage(ulong clientId, Message.Reader reader) {
+            protected static void OnReceiveMessage(ulong clientId, Message.Reader reader) {
                 uint messageId = reader.ReadUInt();
                 if (_receiveMessageCallbacks.TryGetValue(messageId, out ReceiveMessageDelegate callback)) callback(clientId, reader);
-                else Debug.LogError($"NetworkClient - Message with id { messageId } has no associated callback!");
+                else Debug.LogError($"Server - Message with id { messageId } has no associated callback!");
             }
             
             /// <summary>

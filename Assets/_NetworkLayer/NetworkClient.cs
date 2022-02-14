@@ -25,17 +25,26 @@ namespace NetworkLayer {
             /// <summary>
             /// Invoke when starting to connect.
             /// </summary>
-            protected static void OnStartConnecting() => StartConnectingEvent?.Invoke();
-            
+            protected static void OnStartConnecting() {
+                Debug.Log("Client - Started connecting to server...");
+                StartConnectingEvent?.Invoke();
+            }
+
             /// <summary>
             /// Invoke when successfully connected to the server.
             /// </summary>
-            protected static void OnConnect() => ConnectEvent?.Invoke();
+            protected static void OnConnect() {
+                Debug.Log("Client - Connected to server!");
+                ConnectEvent?.Invoke();
+            }
             
             /// <summary>
             /// Invoke when disconnect from the server or failed to connect.
             /// </summary>
-            protected static void OnDisconnect() => DisconnectEvent?.Invoke();
+            protected static void OnDisconnect() {
+                Debug.Log("Client - Disconnected from server!");
+                DisconnectEvent?.Invoke();
+            }
             
             /// <summary>
             /// Invoke when updating the client.
@@ -46,10 +55,10 @@ namespace NetworkLayer {
             /// Invoke when a message is received.
             /// </summary>
             /// <param name="reader"></param>
-            protected void OnReceiveMessage(Message.Reader reader) {
+            protected static void OnReceiveMessage(Message.Reader reader) {
                 uint messageId = reader.ReadUInt();
                 if (_receiveMessageCallbacks.TryGetValue(messageId, out ReceiveMessageDelegate callback)) callback(reader);
-                else Debug.LogError($"NetworkClient - Message with id { messageId } has no associated callback!");
+                else Debug.LogError($"Client - Message with id { messageId } has no associated callback!");
             }
             
             /// <summary>
