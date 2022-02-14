@@ -1,10 +1,8 @@
-using System;
 using System.Collections.Generic;
 using NetworkLayer.Utils;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
-using Unity.Mathematics;
 using Unity.Networking.Transport;
 using UnityEngine;
 
@@ -76,7 +74,7 @@ namespace NetworkLayer.Transports.UTP {
 
             public void Execute() {
                 if (Driver.GetConnectionState(Connection[0]) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(Connection[0], out DataStreamWriter writer)) return;
-                writer.WriteByte(1);
+                writer.WriteByte(UTPUtility.HEADER_CLIENT_PING);
                 writer.WriteInt(PingId);
                 Driver.EndSend(writer);
             }
@@ -152,6 +150,9 @@ namespace NetworkLayer.Transports.UTP {
             /// </summary>
             [WriteOnly] public NativeQueue<EventData> EventQueue;
 
+            /// <summary>
+            /// The time the job started at.
+            /// </summary>
             public float CurrentTime;
 
             /// <summary>
@@ -178,31 +179,44 @@ namespace NetworkLayer.Transports.UTP {
                         // Check the header type
                         byte header = reader.ReadByte();
 
-                        // If the header is 0, then this is a regular message
-                        // If the header is 1, then this is a client ping
-                        if (header == 0) {
-                            // Cache the buffer size
-                            int index = ReceiveBuffer.Length;
+                        // Handle data based on the header
+                        switch (header) {
+                            case UTPUtility.HEADER_MESSAGE: {
+                                // Cache the buffer size
+                                int index = ReceiveBuffer.Length;
 
-                            // Resize the buffer
-                            ReceiveBuffer.ResizeUninitialized(index + reader.Length - 1);
+                                // Resize the buffer
+                                ReceiveBuffer.ResizeUninitialized(index + reader.Length - 1);
 
-                            // Read the data into the buffer
-                            reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length - 1));
+                                // Read the data into the buffer
+                                reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length - 1));
 
-                            // Enqueue the event data
-                            EventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
-                        } else if (header == 1) {
-                            int id = reader.ReadInt();
-                            float t = SendTimes[id];
-                            Rtt[0] = (CurrentTime - t) * 1000;
+                                // Enqueue the event data
+                                EventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
+                                break;
+                            }
+                            case UTPUtility.HEADER_CLIENT_PING: {
+                                int id = reader.ReadInt();
+                                float t = SendTimes[id];
+                                Rtt[0] = (CurrentTime - t) * 1000;
+                                break;
+                            }
+                            case UTPUtility.HEADER_SERVER_PING: {
+                                // Read the ping id
+                                int id = reader.ReadInt();
+                        
+                                // Send the id back
+                                if (0 != Driver.BeginSend(Connection[0], out DataStreamWriter writer)) continue;
+                                writer.WriteByte(UTPUtility.HEADER_SERVER_PING);
+                                writer.WriteInt(id);
+                                Driver.EndSend(writer);
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-
-        private delegate void SendDelegate();
 
         private NativeArray<NetworkConnection> _connection;
         private NativeList<byte> _sendBuffer;
@@ -212,16 +226,13 @@ namespace NetworkLayer.Transports.UTP {
         private NetworkDriver _driver;
         private NetworkPipeline _reliablePipeline;
         private JobHandle _job;
-
         private EClientState _state;
         private readonly Message _message;
         private readonly Queue<SendDelegate> _sendQueue;
-
         private int _pingId;
         private NativeArray<float> _sendTimes;
         private NativeArray<float> _rtt;
         private float _lastPingTime;
-
         private float _storedRtt;
         private bool _disposed;
 
@@ -235,22 +246,10 @@ namespace NetworkLayer.Transports.UTP {
             _eventQueue = new NativeQueue<EventData>(Allocator.Persistent);
             _message = new Message();
             _sendQueue = new Queue<SendDelegate>();
-
             _sendTimes = new NativeArray<float>(1024, Allocator.Persistent);
             _rtt = new NativeArray<float>(1, Allocator.Persistent);
             _rtt[0] = -1;
         }
-
-        /// <summary>
-        /// Convert the network connection state to the client state.
-        /// </summary>
-        /// <param name="state"></param>
-        /// <returns></returns>
-        private EClientState ConvertConnectionState(NetworkConnection.State state) => state switch {
-            NetworkConnection.State.Connected => EClientState.Connected,
-            NetworkConnection.State.Connecting => EClientState.Connecting,
-            _ => EClientState.Disconnected
-        };
 
         /// <summary>
         /// Handle disconnecting.
@@ -288,7 +287,7 @@ namespace NetworkLayer.Transports.UTP {
             _connection[0] = _driver.Connect(endpoint);
 
             // Set the connection state
-            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
+            _state = UTPUtility.ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
 
             // Raise the start connecting event
             OnStartConnecting();
@@ -319,7 +318,7 @@ namespace NetworkLayer.Transports.UTP {
             if (_disposed || !_connection[0].IsCreated) return;
 
             // Update the connection state
-            _state = ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
+            _state = UTPUtility.ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
             
             // Dequeue all events
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {

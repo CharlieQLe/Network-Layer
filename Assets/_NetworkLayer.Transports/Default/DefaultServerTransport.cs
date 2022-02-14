@@ -3,7 +3,11 @@ using System.Collections.Generic;
 namespace NetworkLayer.Transports.Default {
     public class DefaultServerTransport : NetworkServer.BaseTransport {
         public override bool IsRunning { get; }
+        
         public override int ClientCount { get; }
+        
+        public override int GetRTT(ulong clientId) => -1;
+
         public override void Host(ushort port) {
             
         }

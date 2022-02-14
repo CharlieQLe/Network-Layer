@@ -87,6 +87,13 @@ namespace NetworkLayer {
             public abstract int ClientCount { get; }
 
             /// <summary>
+            /// Get the round trip time for the specified client.
+            /// </summary>
+            /// <param name="clientId"></param>
+            /// <returns></returns>
+            public abstract int GetRTT(ulong clientId);
+            
+            /// <summary>
             /// Try to host the server.
             /// </summary>
             /// <param name="port"></param>

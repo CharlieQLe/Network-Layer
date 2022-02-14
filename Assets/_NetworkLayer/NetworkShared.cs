@@ -1,6 +1,7 @@
 namespace NetworkLayer {
     public enum ESendMode : byte {
         Unreliable,
+        Sequenced,
         Reliable
     }
 

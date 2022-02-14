@@ -1,25 +1,30 @@
-using System;
 using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using NetworkLayer.Utils;
-using UnityEngine;
 
 namespace NetworkLayer.Transport.LiteNetLib {
     public class LiteNetLibClientTransport : NetworkClient.BaseTransport, INetEventListener {
         public delegate void WriteConnectionDataDelegate(NetDataWriter writer);
-        public delegate void WriteDisconnectDataDelegate(NetDataWriter writer);
         
         private readonly Message _message;
         private readonly NetManager _netManager;
         private readonly NetDataWriter _dataWriter;
-        private NetPeer _serverPeer;
-        private WriteConnectionDataDelegate _writeConnectionData;
-        private WriteDisconnectDataDelegate _writeDisconnectData;
 
+        /// <summary>
+        /// Invoked on a network error.
+        /// </summary>
         public event EventBasedNetListener.OnNetworkError NetworkErrorEvent;
+        
+        /// <summary>
+        /// Invoked when receiving data from an unconnected endpoint.
+        /// </summary>
         public event EventBasedNetListener.OnNetworkReceiveUnconnected NetworkReceiveUnconnectedEvent;
+        
+        /// <summary>
+        /// Invoked when the latency is updated.
+        /// </summary>
         public event EventBasedNetListener.OnNetworkLatencyUpdate NetworkLatencyUpdateEvent;
         
         public LiteNetLibClientTransport() {
@@ -29,69 +34,95 @@ namespace NetworkLayer.Transport.LiteNetLib {
             _dataWriter = new NetDataWriter();
         }
         
-        public void SetWriteConnectionData(WriteConnectionDataDelegate writeConnectionDataDelegate) => _writeConnectionData = writeConnectionDataDelegate;
-
-        public void SetWriteDisconnectData(WriteDisconnectDataDelegate writeDisconnectDataDelegate) => _writeDisconnectData = writeDisconnectDataDelegate;
-        
-        private EClientState ConvertConnectionState(ConnectionState state) => state switch {
-            ConnectionState.Connected => EClientState.Connected,
-            ConnectionState.Outgoing => EClientState.Connecting,
-            _ => EClientState.Disconnected
-        };
-
-        public override EClientState State => _serverPeer != null ? ConvertConnectionState(_serverPeer.ConnectionState) : EClientState.Disconnected;
-        public override int Rtt => _serverPeer == null ? -1 : _serverPeer.Ping * 2;
-
-        public override void Connect(string address, ushort port) {
+        /// <summary>
+        /// Try to connect to the server with connection data.
+        /// </summary>
+        /// <param name="address"></param>
+        /// <param name="port"></param>
+        /// <param name="writeToConnectionData"></param>
+        public void Connect(string address, ushort port, WriteConnectionDataDelegate writeToConnectionData) {
+            // Do nothing if already connected or connecting
             if (State != EClientState.Disconnected) return;
+            
+            // Write the connection data
             _dataWriter.Reset();
-            _writeConnectionData?.Invoke(_dataWriter);
-            _serverPeer = _netManager.Connect(address, port, _dataWriter);
+            writeToConnectionData?.Invoke(_dataWriter);
+            
+            // Connect
+            _netManager.Connect(address, port, _dataWriter);
+            
+            // Raise the start connecting event
             OnStartConnecting();
         }
 
-        public override void Disconnect() {
+        /// <summary>
+        /// Disconnect from the server with disconnect data.
+        /// </summary>
+        /// <param name="writeToDisconnectData"></param>
+        public void Disconnect(WriteDisconnectDataDelegate writeToDisconnectData) {
+            // Do nothing if already disconnected
             if (State == EClientState.Disconnected) return;
+            
+            // Write the disconnection data
             _dataWriter.Reset();
-            _writeDisconnectData?.Invoke(_dataWriter);
-            _serverPeer.Disconnect(_dataWriter);
+            writeToDisconnectData?.Invoke(_dataWriter);
+            
+            // Disconnect the peer
+            _netManager.FirstPeer.Disconnect(_dataWriter);
         }
+        
+        public override EClientState State => _netManager.FirstPeer != null ? LiteNetLibUtility.ConvertConnectionState(_netManager.FirstPeer.ConnectionState) : EClientState.Disconnected;
+        
+        public override int Rtt => _netManager.FirstPeer == null ? -1 : _netManager.FirstPeer.Ping * 2;
+
+        public override void Connect(string address, ushort port) => Connect(address, port, null);
+
+        public override void Disconnect() => Disconnect(null);
 
         protected override void Update() {
+            // Do nothing if the manager is not running
             if (!_netManager.IsRunning) return;
+            
+            // Poll for events
             _netManager.PollEvents();
-            if (State != EClientState.Disconnected) OnUpdate();
+            
+            // Invoke the update event
+            if (State != EClientState.Connected) OnUpdate();
         }
 
-        public override void Dispose() {
-            _netManager.Stop(true);
-            _serverPeer = null;
-        }
+        public override void Dispose() => _netManager.Stop(true); // Stop the net manager
 
         public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
+            // Do nothing if not connected
             if (State != EClientState.Connected) return;
+            
+            // Write to the message
             _message.Reset();
             _message.AsWriter.PutUInt(Hash32.Generate(messageName));
             writeToMessage(_message.AsWriter);
+            
+            // Write to the data writer
             _dataWriter.Reset();
             _dataWriter.PutBytesWithLength(_message.Data, 0, _message.Length);
-            _serverPeer.Send(_dataWriter, sendMode == ESendMode.Reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable);
+            
+            // Send message
+            _netManager.FirstPeer.Send(_dataWriter, LiteNetLibUtility.ConvertSendMode(sendMode));
         }
 
         void INetEventListener.OnPeerConnected(NetPeer peer) => OnConnect();
 
-        void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo) {
-            _serverPeer = null;
-            OnDisconnect();
-        }
+        void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo) => OnDisconnect();
 
         void INetEventListener.OnNetworkError(IPEndPoint endPoint, SocketError socketError) => NetworkErrorEvent?.Invoke(endPoint, socketError);
 
         void INetEventListener.OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod) {
+            // Copy data to the message
             _message.Reset();
             _message.Resize(reader.UserDataSize);
             int count = reader.GetInt();
             reader.GetBytes(_message.Data, 0, count);
+            
+            // Raise the message receive event
             OnReceiveMessage(_message.AsReader);
         }
 
