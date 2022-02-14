@@ -10,6 +10,13 @@ namespace NetworkLayer {
                 _message = message;
             }
 
+            /// <summary>
+            /// Returns true if the amount of data to read is valid, false otherwise.
+            /// </summary>
+            /// <param name="lengthToRead"></param>
+            /// <returns></returns>
+            public bool CheckLength(int lengthToRead) => _message._position + lengthToRead - 1 >= _message._data.Length;
+
             public byte ReadByte() => ByteConverter.GetByte(_message._data, _message._position, out _message._position);
             public short ReadShort() => UnsafeByteConverter.GetShort(_message._data, _message._position, out _message._position);
             public ushort ReadUShort() => UnsafeByteConverter.GetUShort(_message._data, _message._position, out _message._position);
