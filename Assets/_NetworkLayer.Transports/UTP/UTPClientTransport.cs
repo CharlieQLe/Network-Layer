@@ -234,7 +234,6 @@ namespace NetworkLayer.Transports.UTP {
         private NativeArray<float> _rtt;
         private float _lastPingTime;
         private float _storedRtt;
-        private bool _disposed;
 
         public UTPClientTransport() {
             _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
@@ -315,7 +314,7 @@ namespace NetworkLayer.Transports.UTP {
             _job.Complete();
             
             // Do nothing if the connection is not available
-            if (_disposed || !_connection[0].IsCreated) return;
+            if (!_connection.IsCreated || !_connection[0].IsCreated) return;
 
             // Update the connection state
             _state = UTPUtility.ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
