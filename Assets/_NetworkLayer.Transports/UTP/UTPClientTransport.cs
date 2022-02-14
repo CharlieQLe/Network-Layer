@@ -413,10 +413,9 @@ namespace NetworkLayer.Transports.UTP {
             _receiveBuffer.Dispose();
             _sendData.Dispose();
             _eventQueue.Dispose();
-            _reliablePipeline = default;
-
             _sendTimes.Dispose();
             _rtt.Dispose();
+            _reliablePipeline = default;
         }
 
         public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
