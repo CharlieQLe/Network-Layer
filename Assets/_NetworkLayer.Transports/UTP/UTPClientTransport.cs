@@ -18,22 +18,22 @@ namespace NetworkLayer.Transports.UTP {
             /// <summary>
             /// The index in the send buffer the data exists at
             /// </summary>
-            public readonly int Index;
+            public readonly int index;
 
             /// <summary>
             /// The length of the data to send
             /// </summary>
-            public readonly int Length;
+            public readonly int length;
 
             /// <summary>
             /// The send mode
             /// </summary>
-            public readonly ESendMode SendMode;
+            public readonly ESendMode sendMode;
 
             public SendData(int index, int length, ESendMode sendMode) {
-                Index = index;
-                Length = length;
-                SendMode = sendMode;
+                this.index = index;
+                this.length = length;
+                this.sendMode = sendMode;
             }
         }
 
@@ -44,22 +44,22 @@ namespace NetworkLayer.Transports.UTP {
             /// <summary>
             /// The event type
             /// </summary>
-            public readonly NetworkEvent.Type Type;
+            public readonly NetworkEvent.Type type;
 
             /// <summary>
             /// The index in the receive buffer the data exists at
             /// </summary>
-            public readonly int Index;
+            public readonly int index;
 
             /// <summary>
             /// The length of the data in the receive buffer
             /// </summary>
-            public readonly int Length;
+            public readonly int length;
 
             public EventData(NetworkEvent.Type type, int index, int length) {
-                Type = type;
-                Index = index;
-                Length = length;
+                this.type = type;
+                this.index = index;
+                this.length = length;
             }
         }
 
@@ -68,15 +68,15 @@ namespace NetworkLayer.Transports.UTP {
         /// </summary>
         [BurstCompile]
         private struct SendPingJob : IJob {
-            public int PingId;
-            public NetworkDriver Driver;
-            [ReadOnly] public NativeArray<NetworkConnection> Connection;
+            public NetworkDriver driver;
+            public int pingId;
+            [ReadOnly] public NativeArray<NetworkConnection> connection;
 
             public void Execute() {
-                if (Driver.GetConnectionState(Connection[0]) != NetworkConnection.State.Connected || 0 != Driver.BeginSend(Connection[0], out DataStreamWriter writer)) return;
+                if (driver.GetConnectionState(connection[0]) != NetworkConnection.State.Connected || 0 != driver.BeginSend(connection[0], out DataStreamWriter writer)) return;
                 writer.WriteByte(UTPUtility.HEADER_CLIENT_PING);
-                writer.WriteInt(PingId);
-                Driver.EndSend(writer);
+                writer.WriteInt(pingId);
+                driver.EndSend(writer);
             }
         }
 
@@ -88,40 +88,40 @@ namespace NetworkLayer.Transports.UTP {
             /// <summary>
             /// The concurrent network driver
             /// </summary>
-            public NetworkDriver.Concurrent Driver;
+            public NetworkDriver.Concurrent driver;
 
             /// <summary>
             /// The reliable pipeline
             /// </summary>
-            public NetworkPipeline ReliablePipeline;
+            public NetworkPipeline reliablePipeline;
 
             /// <summary>
             /// The connection to the server
             /// </summary>
-            [ReadOnly] public NativeArray<NetworkConnection> Connection;
+            [ReadOnly] public NativeArray<NetworkConnection> connection;
 
             /// <summary>
             /// All of the send data
             /// </summary>
-            [ReadOnly] public NativeList<SendData> SendList;
+            [ReadOnly] public NativeList<SendData> sendList;
 
             /// <summary>
             /// The send buffer
             /// </summary>
-            [ReadOnly] public NativeArray<byte> SendBuffer;
+            [ReadOnly] public NativeArray<byte> sendBuffer;
 
             public void Execute(int index) {
                 // Get the send data
-                SendData sendData = SendList[index];
+                SendData sendData = sendList[index];
 
                 // Do nothing if the data cannot be send
-                if (0 != Driver.BeginSend(sendData.SendMode == ESendMode.Reliable ? ReliablePipeline : NetworkPipeline.Null, Connection[0], out DataStreamWriter writer)) return;
+                if (0 != driver.BeginSend(sendData.sendMode == ESendMode.Reliable ? reliablePipeline : NetworkPipeline.Null, connection[0], out DataStreamWriter writer)) return;
 
                 // Write to the data stream from the send buffer
-                writer.WriteBytes(SendBuffer.GetSubArray(sendData.Index, sendData.Length));
+                writer.WriteBytes(sendBuffer.GetSubArray(sendData.index, sendData.length));
 
                 // End the send
-                Driver.EndSend(writer);
+                driver.EndSend(writer);
             }
         }
 
@@ -133,48 +133,48 @@ namespace NetworkLayer.Transports.UTP {
             /// <summary>
             /// The network driver
             /// </summary>
-            public NetworkDriver Driver;
+            public NetworkDriver driver;
 
             /// <summary>
             /// The receive buffer
             /// </summary>
-            public NativeList<byte> ReceiveBuffer;
+            public NativeList<byte> receiveBuffer;
 
             /// <summary>
             /// The connection to the server
             /// </summary>
-            [WriteOnly] public NativeArray<NetworkConnection> Connection;
+            public NativeArray<NetworkConnection> connection;
 
             /// <summary>
             /// The event queue
             /// </summary>
-            [WriteOnly] public NativeQueue<EventData> EventQueue;
+            [WriteOnly] public NativeQueue<EventData> eventQueue;
 
             /// <summary>
             /// The time the job started at.
             /// </summary>
-            public float CurrentTime;
+            public float currentTime;
 
             /// <summary>
             /// Contains the send times.
             /// </summary>
-            [ReadOnly] public NativeArray<float> SendTimes;
+            [ReadOnly] public NativeArray<float> sendTimes;
 
             /// <summary>
             /// Contains the rtt.
             /// </summary>
-            [WriteOnly] public NativeArray<float> Rtt;
+            [WriteOnly] public NativeArray<float> rtt;
 
             public void Execute() {
                 // Pop every event
                 NetworkEvent.Type type;
-                while ((type = Driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
+                while ((type = driver.PopEvent(out NetworkConnection _, out DataStreamReader reader)) != NetworkEvent.Type.Empty) {
                     // If this is a connect event, simply enqueue the event
                     // Otherwise, handle the data in the stream
-                    if (type == NetworkEvent.Type.Connect) EventQueue.Enqueue(new EventData(type, 0, 0));
+                    if (type == NetworkEvent.Type.Connect) eventQueue.Enqueue(new EventData(type, 0, 0));
                     else {
                         // Set the connection to default if it is a disconnect event
-                        if (type == NetworkEvent.Type.Disconnect) Connection[0] = default;
+                        if (type == NetworkEvent.Type.Disconnect) connection[0] = default;
 
                         // Check the header type
                         byte header = reader.ReadByte();
@@ -183,22 +183,22 @@ namespace NetworkLayer.Transports.UTP {
                         switch (header) {
                             case UTPUtility.HEADER_MESSAGE: {
                                 // Cache the buffer size
-                                int index = ReceiveBuffer.Length;
+                                int index = receiveBuffer.Length;
 
                                 // Resize the buffer
-                                ReceiveBuffer.ResizeUninitialized(index + reader.Length - 1);
+                                receiveBuffer.ResizeUninitialized(index + reader.Length - 1);
 
                                 // Read the data into the buffer
-                                reader.ReadBytes(ReceiveBuffer.AsArray().GetSubArray(index, reader.Length - 1));
+                                reader.ReadBytes(receiveBuffer.AsArray().GetSubArray(index, reader.Length - 1));
 
                                 // Enqueue the event data
-                                EventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
+                                eventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
                                 break;
                             }
                             case UTPUtility.HEADER_CLIENT_PING: {
                                 int id = reader.ReadInt();
-                                float t = SendTimes[id];
-                                Rtt[0] = (CurrentTime - t) * 1000;
+                                float t = sendTimes[id];
+                                rtt[0] = (currentTime - t) * 1000;
                                 break;
                             }
                             case UTPUtility.HEADER_SERVER_PING: {
@@ -206,10 +206,10 @@ namespace NetworkLayer.Transports.UTP {
                                 int id = reader.ReadInt();
                         
                                 // Send the id back
-                                if (0 != Driver.BeginSend(Connection[0], out DataStreamWriter writer)) continue;
+                                if (0 != driver.BeginSend(connection[0], out DataStreamWriter writer)) continue;
                                 writer.WriteByte(UTPUtility.HEADER_SERVER_PING);
                                 writer.WriteInt(id);
-                                Driver.EndSend(writer);
+                                driver.EndSend(writer);
                                 break;
                             }
                         }
@@ -321,7 +321,7 @@ namespace NetworkLayer.Transports.UTP {
             
             // Dequeue all events
             while (_eventQueue.TryDequeue(out EventData networkEvent)) {
-                switch (networkEvent.Type) {
+                switch (networkEvent.type) {
                     case NetworkEvent.Type.Connect: {
                         // Raise the connect event
                         OnConnect();
@@ -330,10 +330,10 @@ namespace NetworkLayer.Transports.UTP {
                     case NetworkEvent.Type.Data: {
                         // Reset and resize the message
                         _message.Reset();
-                        _message.Resize(networkEvent.Length);
+                        _message.Resize(networkEvent.length);
 
                         // Copy the buffer into the message
-                        NativeArray<byte>.Copy(_receiveBuffer, networkEvent.Index, _message.Data, 0, networkEvent.Length);
+                        NativeArray<byte>.Copy(_receiveBuffer, networkEvent.index, _message.Data, 0, networkEvent.length);
 
                         // Receive the message
                         OnReceiveMessage(_message.AsReader);
@@ -371,28 +371,28 @@ namespace NetworkLayer.Transports.UTP {
                 _sendTimes[_pingId] = currentTime;
                 _pingId = (_pingId + 1) % 1024;
                 sendPingJob = new SendPingJob {
-                    Driver = _driver,
-                    Connection = _connection,
-                    PingId = _pingId
+                    driver = _driver,
+                    connection = _connection,
+                    pingId = _pingId
                 };
             }
 
             // Create jobs
             SendDataJob sendDataJob = new SendDataJob {
-                Driver = _driver.ToConcurrent(),
-                Connection = _connection,
-                ReliablePipeline = _reliablePipeline,
-                SendList = _sendData,
-                SendBuffer = _sendBuffer
+                driver = _driver.ToConcurrent(),
+                connection = _connection,
+                reliablePipeline = _reliablePipeline,
+                sendList = _sendData,
+                sendBuffer = _sendBuffer
             };
             ProcessJob processJob = new ProcessJob {
-                Driver = _driver,
-                Connection = _connection,
-                EventQueue = _eventQueue,
-                ReceiveBuffer = _receiveBuffer,
-                CurrentTime = currentTime,
-                SendTimes = _sendTimes,
-                Rtt = _rtt
+                driver = _driver,
+                connection = _connection,
+                eventQueue = _eventQueue,
+                receiveBuffer = _receiveBuffer,
+                currentTime = currentTime,
+                sendTimes = _sendTimes,
+                rtt = _rtt
             };
 
             // Schedule jobs
