@@ -12,8 +12,18 @@ namespace NetworkLayer.Transports.UTP {
     /// The server transport for the Unity Transport Package
     /// </summary>
     public class UTPServerTransport : NetworkServer.BaseTransport {
-        public struct ClientData {
+        /// <summary>
+        /// Stores data for each client
+        /// </summary>
+        private struct ClientData {
+            /// <summary>
+            /// The network connection
+            /// </summary>
             public NetworkConnection connection;
+            
+            /// <summary>
+            /// The round trip time
+            /// </summary>
             public float rtt;
         }
         
