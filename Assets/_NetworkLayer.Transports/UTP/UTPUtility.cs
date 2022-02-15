@@ -6,8 +6,8 @@ namespace NetworkLayer.Transports.UTP {
     
     public static class UTPUtility {
         public const byte HEADER_MESSAGE = 0;
-        public const byte HEADER_CLIENT_PING = 1;
-        public const byte HEADER_SERVER_PING = 2;
+        public const byte HEADER_CLIENT_RTT = 1;
+        public const byte HEADER_SERVER_RTT = 2;
         
         /// <summary>
         /// Convert the network connection state to the client state.

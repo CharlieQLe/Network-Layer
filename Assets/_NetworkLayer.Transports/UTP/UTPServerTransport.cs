@@ -92,44 +92,6 @@ namespace NetworkLayer.Transports.UTP {
         }
         
         /// <summary>
-        /// The send ping job
-        /// </summary>
-        [BurstCompile]
-        private struct SendPingJob : IJobFor {
-            /// <summary>
-            /// The concurrent network driver
-            /// </summary>
-            public NetworkDriver.Concurrent driver;
-            
-            /// <summary>
-            /// All of the send data
-            /// </summary>
-            [ReadOnly] public NativeArray<ClientData> clientData;
-
-            /// <summary>
-            /// The id of the ping to send
-            /// </summary>
-            public int pingId;
-            
-            public void Execute(int index) {
-                // Get the connection
-                ClientData data = clientData[index];
-                
-                // Do nothing if the connection isn't listed or if the send fails
-                if (driver.GetConnectionState(data.connection) != NetworkConnection.State.Connected || 0 != driver.BeginSend(data.connection, out DataStreamWriter writer)) return;
-
-                // Write the header
-                writer.WriteByte(UTPUtility.HEADER_SERVER_PING);
-
-                // Write the ping id
-                writer.WriteInt(pingId);
-                
-                // End the send
-                driver.EndSend(writer);
-            }
-        }
-
-        /// <summary>
         /// The send data job
         /// </summary>
         [BurstCompile]
@@ -268,21 +230,25 @@ namespace NetworkLayer.Transports.UTP {
                             eventQueue.Enqueue(new EventData((ulong) connection.InternalId, type, index, reader.Length - 1));
                             break;
                         }
-                        case UTPUtility.HEADER_CLIENT_PING: {
+                        case UTPUtility.HEADER_CLIENT_RTT: {
                             // Read the ping id
                             int id = reader.ReadInt();
                         
                             // Send the id back
                             if (0 != driver.BeginSend(connection, out DataStreamWriter writer)) continue;
-                            writer.WriteByte(UTPUtility.HEADER_CLIENT_PING);
+                            writer.WriteByte(UTPUtility.HEADER_CLIENT_RTT);
                             writer.WriteInt(id);
                             driver.EndSend(writer);
                             break;
                         }
-                        case UTPUtility.HEADER_SERVER_PING: {
+                        case UTPUtility.HEADER_SERVER_RTT: {
                             int id = reader.ReadInt();
                             float t = sendTimes[id];
-                            if (clientData.TryGetValue((ulong) connection.InternalId, out ClientData data)) data.rtt = (currentTime - t) * 1000;
+                            ulong clientId = (ulong) connection.InternalId;
+                            if (clientData.TryGetValue(clientId, out ClientData data)) {
+                                data.rtt = (currentTime - t) * 1000;
+                                clientData[clientId] = data;
+                            }
                             break;
                         }
                     }
@@ -301,7 +267,7 @@ namespace NetworkLayer.Transports.UTP {
         private NetworkDriver _driver;
         private NetworkPipeline _reliablePipeline;
         private JobHandle _job;
-        private int _pingId;
+        private int _rttId;
         private NativeArray<float> _sendTimes;
         private float _lastPingTime;
         private readonly Message _message;
@@ -485,25 +451,33 @@ namespace NetworkLayer.Transports.UTP {
             // Get the current time
             float currentTime = Time.realtimeSinceStartup;
             
-            // Initialize the job
-            SendPingJob sendPingJob = default;
-            NativeArray<ClientData> clientData = default;
-            
             // Copy rtt
             foreach (KeyValue<ulong, ClientData> data in _clientData) _cachedRtt[data.Key] = Mathf.RoundToInt(data.Value.rtt);
             
-            // Check if rtt can be retrieved
-            bool sendPing = _lastPingTime == 0 || currentTime >= _lastPingTime + 1;
-            if (sendPing) {
+            // Check if it is time to update rtt
+            if (_lastPingTime == 0 || currentTime >= _lastPingTime + 1) {
+                // Update the last ping time
                 _lastPingTime = currentTime;
-                _sendTimes[_pingId] = currentTime;
-                _pingId = (_pingId + 1) % 1024;
-                clientData = _clientData.GetValueArray(Allocator.TempJob);
-                sendPingJob = new SendPingJob {
-                    driver = _driver.ToConcurrent(),
-                    clientData = clientData,
-                    pingId = _pingId
-                };
+                
+                // Set the send time
+                _sendTimes[_rttId] = currentTime;
+                
+                // Reset the message and write the message id and other data
+                _message.Reset();
+                _message.AsWriter.PutByte(UTPUtility.HEADER_SERVER_RTT);
+                _message.AsWriter.PutInt(_rttId);
+            
+                // Resize the send buffer and copy the message data into the buffer
+                int index = _sendBuffer.Length;
+                _sendBuffer.Resize(index + _message.Length, NativeArrayOptions.UninitializedMemory);
+                NativeArray<byte>.Copy(_message.Data, 0, _sendBuffer.AsArray(), index, _message.Length);
+                
+                // Enqueue the send for every client
+                using NativeArray<ulong> clients = _clientData.GetKeyArray(Allocator.Temp);
+                for (int i = 0; i < clients.Length; i++) _sendData.Add(new SendData(clients[i], index, _message.Length, ESendMode.Unreliable));
+                
+                // Calculate the next rtt id
+                _rttId = (_rttId + 1) % 1024;
             }
             
             // Create jobs
@@ -529,11 +503,7 @@ namespace NetworkLayer.Transports.UTP {
             };
             
             // Schedule jobs
-            if (sendPing) {
-                _job = sendPingJob.ScheduleParallel(clientData.Length, 1, default);
-                _job = clientData.Dispose(_job);
-            } else _job = default;
-            if (_sendData.Length > 0) _job = sendDataJob.ScheduleParallel(_sendData.Length, 1, default);
+            _job = _sendData.Length > 0 ? sendDataJob.ScheduleParallel(_sendData.Length, 1, default) : default;
             _job = _driver.ScheduleUpdate(_job);
             _job = acceptConnectionsJob.Schedule(_job);
             _job = processJob.Schedule(_job);

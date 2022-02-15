@@ -64,23 +64,6 @@ namespace NetworkLayer.Transports.UTP {
         }
 
         /// <summary>
-        /// Send a ping id to the server.
-        /// </summary>
-        [BurstCompile]
-        private struct SendPingJob : IJob {
-            public NetworkDriver driver;
-            public int pingId;
-            [ReadOnly] public NativeArray<NetworkConnection> connection;
-
-            public void Execute() {
-                if (driver.GetConnectionState(connection[0]) != NetworkConnection.State.Connected || 0 != driver.BeginSend(connection[0], out DataStreamWriter writer)) return;
-                writer.WriteByte(UTPUtility.HEADER_CLIENT_PING);
-                writer.WriteInt(pingId);
-                driver.EndSend(writer);
-            }
-        }
-
-        /// <summary>
         /// The send data job
         /// </summary>
         [BurstCompile]
@@ -195,19 +178,19 @@ namespace NetworkLayer.Transports.UTP {
                                 eventQueue.Enqueue(new EventData(type, index, reader.Length - 1));
                                 break;
                             }
-                            case UTPUtility.HEADER_CLIENT_PING: {
+                            case UTPUtility.HEADER_CLIENT_RTT: {;
                                 int id = reader.ReadInt();
                                 float t = sendTimes[id];
                                 rtt[0] = (currentTime - t) * 1000;
                                 break;
                             }
-                            case UTPUtility.HEADER_SERVER_PING: {
+                            case UTPUtility.HEADER_SERVER_RTT: {
                                 // Read the ping id
                                 int id = reader.ReadInt();
                         
                                 // Send the id back
                                 if (0 != driver.BeginSend(connection[0], out DataStreamWriter writer)) continue;
-                                writer.WriteByte(UTPUtility.HEADER_SERVER_PING);
+                                writer.WriteByte(UTPUtility.HEADER_SERVER_RTT);
                                 writer.WriteInt(id);
                                 driver.EndSend(writer);
                                 break;
@@ -229,7 +212,7 @@ namespace NetworkLayer.Transports.UTP {
         private EClientState _state;
         private readonly Message _message;
         private readonly Queue<SendDelegate> _sendQueue;
-        private int _pingId;
+        private int _rttId;
         private NativeArray<float> _sendTimes;
         private NativeArray<float> _rtt;
         private float _lastPingTime;
@@ -316,6 +299,9 @@ namespace NetworkLayer.Transports.UTP {
             // Do nothing if the connection is not available
             if (!_connection.IsCreated || !_connection[0].IsCreated) return;
 
+            // Set the rtt
+            _storedRtt = _rtt[0];
+            
             // Update the connection state
             _state = UTPUtility.ConvertConnectionState(_driver.GetConnectionState(_connection[0]));
             
@@ -355,26 +341,32 @@ namespace NetworkLayer.Transports.UTP {
             // Process the send data
             while (_sendQueue.Count > 0) _sendQueue.Dequeue()();
 
-            // Set the rtt
-            _storedRtt = _rtt[0];
-            
             // Get the current time
             float currentTime = Time.realtimeSinceStartup;
             
-            // Initialize the job
-            SendPingJob sendPingJob = default;
-            
-            // Check if rtt can be retrieved
-            bool sendPing = _lastPingTime == 0 || currentTime >= _lastPingTime + 1;
-            if (sendPing) {
+            // Check if it is time to update rtt
+            if (_lastPingTime == 0 || currentTime >= _lastPingTime + 1) {
+                // Set the last ping time
                 _lastPingTime = currentTime;
-                _sendTimes[_pingId] = currentTime;
-                _pingId = (_pingId + 1) % 1024;
-                sendPingJob = new SendPingJob {
-                    driver = _driver,
-                    connection = _connection,
-                    pingId = _pingId
-                };
+                
+                // Set the send time
+                _sendTimes[_rttId] = currentTime;
+                
+                // Write the data into the message
+                _message.Reset();
+                _message.AsWriter.PutByte(UTPUtility.HEADER_CLIENT_RTT);
+                _message.AsWriter.PutInt(_rttId);
+
+                // Copy the message data into the send buffer
+                int index = _sendBuffer.Length;
+                _sendBuffer.ResizeUninitialized(index + _message.Length);
+                NativeArray<byte>.Copy(_message.Data, 0, _sendBuffer.AsArray(), index, _message.Length);
+
+                // Add the send data
+                _sendData.Add(new SendData(index, _message.Length, ESendMode.Unreliable));
+                
+                // Calculate the next ping id
+                _rttId = (_rttId + 1) % 1024;
             }
 
             // Create jobs
@@ -396,8 +388,7 @@ namespace NetworkLayer.Transports.UTP {
             };
 
             // Schedule jobs
-            _job = sendPing ? sendPingJob.Schedule() : default;
-            if (_sendData.Length > 0) _job = sendDataJob.ScheduleParallel(_sendData.Length, 1, _job);
+            _job = _state == EClientState.Connected && _sendData.Length > 0 ? sendDataJob.ScheduleParallel(_sendData.Length, 1, _job) : default;
             _job = _driver.ScheduleUpdate(_job);
             _job = processJob.Schedule(_job);
 
@@ -425,7 +416,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendQueue.Enqueue(() => {
                 // Write the data into the message
                 _message.Reset();
-                _message.AsWriter.PutByte(0);
+                _message.AsWriter.PutByte(UTPUtility.HEADER_MESSAGE);
                 _message.AsWriter.PutUInt(Hash32.Generate(messageName));
                 writeToMessage(_message.AsWriter);
 
