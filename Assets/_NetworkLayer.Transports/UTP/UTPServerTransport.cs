@@ -105,6 +105,11 @@ namespace NetworkLayer.Transports.UTP {
             /// The reliable pipeline
             /// </summary>
             public NetworkPipeline reliablePipeline;
+
+            /// <summary>
+            /// The sequenced pipeline
+            /// </summary>
+            public NetworkPipeline sequencedPipeline;
             
             /// <summary>
             /// The hashmap of clients
@@ -126,7 +131,11 @@ namespace NetworkLayer.Transports.UTP {
                 SendData sendData = sendList[index];
                 
                 // Do nothing if the connection isn't listed or if the send fails
-                if (!clientData.TryGetValue(sendData.Client, out ClientData data) || 0 != driver.BeginSend(sendData.SendMode == ESendMode.Reliable ? reliablePipeline : NetworkPipeline.Null, data.connection, out DataStreamWriter writer)) return;
+                if (!clientData.TryGetValue(sendData.Client, out ClientData data) || 0 != driver.BeginSend(sendData.SendMode switch {
+                        ESendMode.Reliable => reliablePipeline,
+                        ESendMode.Sequenced => sequencedPipeline,
+                        _ => NetworkPipeline.Null
+                    }, data.connection, out DataStreamWriter writer)) return;
                 
                 // Write the bytes from the send buffer
                 writer.WriteBytes(sendBuffer.GetSubArray(sendData.Index, sendData.Length));
@@ -266,6 +275,7 @@ namespace NetworkLayer.Transports.UTP {
         private NativeQueue<ulong> _acceptedConnections;
         private NetworkDriver _driver;
         private NetworkPipeline _reliablePipeline;
+        private NetworkPipeline _sequencedPipeline;
         private JobHandle _job;
         private int _rttId;
         private NativeArray<float> _sendTimes;
@@ -333,8 +343,9 @@ namespace NetworkLayer.Transports.UTP {
             // Create the driver and attempt to host
             _driver = NetworkDriver.Create();
             if (0 == _driver.Bind(endpoint) && 0 == _driver.Listen()) {
-                // Create the pipeline
+                // Create the pipelines
                 _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
+                _sequencedPipeline = _driver.CreatePipeline(typeof(UnreliableSequencedPipelineStage));
                 
                 // Raise the host event
                 OnHost();
@@ -370,6 +381,7 @@ namespace NetworkLayer.Transports.UTP {
             // Dispose the driver and pipelines
             _driver.Dispose();
             _reliablePipeline = default;
+            _sequencedPipeline = default;
             
             // Raise the close event
             OnClose();
@@ -484,6 +496,7 @@ namespace NetworkLayer.Transports.UTP {
             SendDataJob sendDataJob = new SendDataJob {
                 driver = _driver.ToConcurrent(),
                 reliablePipeline = _reliablePipeline,
+                sequencedPipeline = _sequencedPipeline,
                 clientData = _clientData,
                 sendList = _sendData,
                 sendBuffer = _sendBuffer

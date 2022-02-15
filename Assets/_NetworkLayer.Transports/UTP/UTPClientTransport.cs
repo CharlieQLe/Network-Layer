@@ -79,6 +79,11 @@ namespace NetworkLayer.Transports.UTP {
             public NetworkPipeline reliablePipeline;
 
             /// <summary>
+            /// The sequenced pipeline
+            /// </summary>
+            public NetworkPipeline sequencedPipeline;
+
+            /// <summary>
             /// The connection to the server
             /// </summary>
             [ReadOnly] public NativeArray<NetworkConnection> connection;
@@ -98,7 +103,11 @@ namespace NetworkLayer.Transports.UTP {
                 SendData sendData = sendList[index];
 
                 // Do nothing if the data cannot be send
-                if (0 != driver.BeginSend(sendData.sendMode == ESendMode.Reliable ? reliablePipeline : NetworkPipeline.Null, connection[0], out DataStreamWriter writer)) return;
+                if (0 != driver.BeginSend(sendData.sendMode switch {
+                        ESendMode.Reliable => reliablePipeline,
+                        ESendMode.Sequenced => sequencedPipeline,
+                        _ => NetworkPipeline.Null
+                    }, connection[0], out DataStreamWriter writer)) return;
 
                 // Write to the data stream from the send buffer
                 writer.WriteBytes(sendBuffer.GetSubArray(sendData.index, sendData.length));
@@ -208,6 +217,7 @@ namespace NetworkLayer.Transports.UTP {
         private NativeQueue<EventData> _eventQueue;
         private NetworkDriver _driver;
         private NetworkPipeline _reliablePipeline;
+        private NetworkPipeline _sequencedPipeline;
         private JobHandle _job;
         private EClientState _state;
         private readonly Message _message;
@@ -222,6 +232,7 @@ namespace NetworkLayer.Transports.UTP {
             _connection = new NativeArray<NetworkConnection>(1, Allocator.Persistent);
             _driver = NetworkDriver.Create();
             _reliablePipeline = _driver.CreatePipeline(typeof(ReliableSequencedPipelineStage));
+            _sequencedPipeline = _driver.CreatePipeline(typeof(UnreliableSequencedPipelineStage));
             _sendBuffer = new NativeList<byte>(1024, Allocator.Persistent);
             _receiveBuffer = new NativeList<byte>(1024, Allocator.Persistent);
             _sendData = new NativeList<SendData>(1, Allocator.Persistent);
@@ -374,6 +385,7 @@ namespace NetworkLayer.Transports.UTP {
                 driver = _driver.ToConcurrent(),
                 connection = _connection,
                 reliablePipeline = _reliablePipeline,
+                sequencedPipeline = _sequencedPipeline,
                 sendList = _sendData,
                 sendBuffer = _sendBuffer
             };
@@ -407,6 +419,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendTimes.Dispose();
             _rtt.Dispose();
             _reliablePipeline = default;
+            _sequencedPipeline = default;
         }
 
         public override void Send(string messageName, WriteToMessageDelegate writeToMessage, ESendMode sendMode) {
