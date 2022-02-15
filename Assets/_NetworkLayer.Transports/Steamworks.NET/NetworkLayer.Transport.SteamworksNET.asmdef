@@ -1,0 +1,17 @@
+{
+    "name": "NetworkLayer.Transport.SteamworksNET",
+    "rootNamespace": "NetworkLayer.Transport.SteamworksNET",
+    "references": [
+        "GUID:e921494703fee8a6c88132c214f24dd3",
+        "GUID:68bd7fdb68ef2684e982e8a9825b18a5"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
