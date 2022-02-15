@@ -93,10 +93,10 @@ namespace NetworkLayer.Transports.Default {
 
         public override void Disconnect() {
             if (State == EClientState.Disconnected) return;
-            _socket.Shutdown(SocketShutdown.Both);
-            _socket.Close();
             _receiveTokenSource.Cancel();
             _receiveTask.Wait();
+            _socket.Shutdown(SocketShutdown.Both);
+            _socket.Close();
             _receiveQueue.Clear();
             _receiveIndex = 0;
             _state = EClientState.Disconnected;
