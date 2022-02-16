@@ -3,6 +3,8 @@ using UnityEngine;
 
 namespace NetworkLayer.Transport.SteamworksNET {
     public class SteamworksNETClientTransport : NetworkClient.BaseTransport {
+        private HSteamNetConnection _connection;
+        
         public override EClientState State { get; }
         public override int Rtt { get; }
 

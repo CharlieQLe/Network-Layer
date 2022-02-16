@@ -284,6 +284,7 @@ namespace NetworkLayer.Transports.UTP {
         private readonly Queue<PendingDisconnectDelegate> _pendingDisconnectQueue;
         private readonly Queue<SendDelegate> _sendQueue;
         private readonly Dictionary<ulong, int> _cachedRtt;
+        private readonly List<ulong> _clientIds;
 
         private int _connectionCount;
 
@@ -299,6 +300,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendQueue = new Queue<SendDelegate>();
             _cachedRtt = new Dictionary<ulong, int>();
             _sendTimes = new NativeArray<float>(1024, Allocator.Persistent);
+            _clientIds = new List<ulong>();
         }
                 
         /// <summary>
@@ -377,6 +379,7 @@ namespace NetworkLayer.Transports.UTP {
             _sendQueue.Clear();
             _eventQueue.Clear();
             _acceptedConnections.Clear();
+            _clientIds.Clear();
 
             // Dispose the driver and pipelines
             _driver.Dispose();
@@ -401,6 +404,7 @@ namespace NetworkLayer.Transports.UTP {
                 
                 // Remove the connection
                 _clientData.Remove(clientId);
+                _clientIds.Remove(clientId);
 
                 // Raise the disconnect event
                 OnDisconnect(clientId);
@@ -421,6 +425,9 @@ namespace NetworkLayer.Transports.UTP {
             while (_acceptedConnections.TryDequeue(out ulong client)) {
                 // Add the rtt
                 _cachedRtt[client] = -1;
+                
+                // Add the id
+                _clientIds.Add(client);
                 
                 // Raise the connect event
                 OnConnect(client);
@@ -443,6 +450,9 @@ namespace NetworkLayer.Transports.UTP {
                 } else {
                     // Remove the rtt
                     _cachedRtt.Remove(networkEvent.ClientId);
+                    
+                    // Remove the client
+                    _clientIds.Remove(networkEvent.ClientId);
                     
                     // Raise the disconnect event
                     OnDisconnect(networkEvent.ClientId);
@@ -587,8 +597,7 @@ namespace NetworkLayer.Transports.UTP {
 
         public override void PopulateClientIds(List<ulong> clientIds) {
             clientIds.Clear();
-            using NativeArray<ulong> ids = _clientData.GetKeyArray(Allocator.Temp);
-            for (int i = 0; i < ids.Length; i++) clientIds.Add(ids[i]);
+            for (int i = 0; i < _clientIds.Count; i++) clientIds.Add(_clientIds[i]);
         }
     }
 }
